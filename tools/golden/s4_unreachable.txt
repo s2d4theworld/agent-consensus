@@ -1,0 +1,11 @@
+=== STDOUT ===
+
+  Discussion aborted: cannot reach http://127.0.0.1:1 - is `opencode serve` running?
+=== EXC ===
+
+=== TRANSCRIPT ===
+
+=== REC ===
+sessions: []
+deletes: 0
+msgs: []

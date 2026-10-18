@@ -1,0 +1,88 @@
+=== STDOUT ===
+
+  Topic: S1 topic
+  Max rounds: 3
+
+
+  [Model] P (opencode/x)  vs  C (opencode/x)
+  [Judge] J (opencode/x)
+  [Transport] opencode
+
+  [Round 1] P is thinking...
+
+  ===== [P] (opencode/x) =====
+Proposer: I defend the topic.
+
+  [Round 1] C is evaluating...
+
+  ===== [C] (opencode/x) =====
+Critic: I challenge the topic.
+
+  [Judge] skipped in round 1
+
+  [Round 2] P is thinking...
+
+  ===== [P] (opencode/x) =====
+Proposer: I defend the topic.
+
+  [Round 2] C is evaluating...
+
+  ===== [C] (opencode/x) =====
+Critic: I challenge the topic.
+
+  [Judge: J (opencode/x)] NO - positions differ.
+
+  [Round 3] P is thinking...
+
+  ===== [P] (opencode/x) =====
+Proposer: I defend the topic.
+
+  [Round 3] C is evaluating...
+
+  ===== [C] (opencode/x) =====
+Critic: I challenge the topic.
+
+  [Judge: J (opencode/x)] YES - both agree now.
+
+============================================================
+  Final status : CONSENSUS
+  Duration     : <N> sec, 3 rounds
+  Transcript   : <TMP>\transcripts\discussion_<TS>.txt
+============================================================
+=== EXC ===
+
+=== TRANSCRIPT ===
+TOPIC: S1 topic
+START: <T>
+JUDGE: J (opencode/x)
+============================================================
+
+--- Round 1 ---
+[P]
+Proposer: I defend the topic.
+
+[C]
+Critic: I challenge the topic.
+
+--- Round 2 ---
+[P]
+Proposer: I defend the topic.
+
+[C]
+Critic: I challenge the topic.
+
+--- Round 3 ---
+[P]
+Proposer: I defend the topic.
+
+[C]
+Critic: I challenge the topic.
+
+============================================================
+STATUS: CONSENSUS
+JUDGE NOTE: YES - both agree now.
+DURATION: <N>s
+=== REC ===
+sessions: ['agent-consensus proposer <TS>', 'agent-consensus critic <TS>', 'agent-consensus judge <TS>']
+deletes: 3
+msgs: [('ses_fake0001test2018', 'msg_fake0001test_t0', 'debater', 'Discussion topic: S1 topic\nStart the discussion now.'), ('ses_fake0002test2018', 'msg_fake0002test_t0', 'debater', 'Discussion topic: S1 topic\nStart the discussion now.\n\n[P]: Proposer: I defend the topic.'), ('ses_fake0001test2018', 'msg_fake0001test_t0', 'debater', '[C]: Critic: I challenge the topic.'), ('ses_fake0002test2018', 'msg_fake0002test_t1', 'debater', '[P]: Proposer: I defend the topic.'), ('ses_fake0003test2018', 'msg_fake0003test_t0', None, 'TOPIC: S1 topic\n\nHere is the transcript:\n\n[P]:\nProposer: I defend the topic.\n\n[C]:\nCritic: I challenge the topic.\n\n[P]:\nProposer: I defend the topic.\n\n[C]:\nCritic: I challenge the topic.'), ('ses_fake0001test2018', 'msg_fake0001test_t2', 'debater', '[C]: Critic: I challenge the topic.'), ('ses_fake0002test2018', 'msg_fake0002test_t3', 'debater', '[P]: Proposer: I defend the topic.'), ('ses_fake0003test2018', 'msg_fake0003test_t4', None, 'New exchange:\n\n[P]:\nProposer: I defend the topic.\n\n[C]:\nCritic: I challenge the topic.')]

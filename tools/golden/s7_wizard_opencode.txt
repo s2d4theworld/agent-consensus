@@ -1,0 +1,32 @@
+=== STDOUT ===
+============================================================
+  AGENT CONSENSUS — Proposer vs Critic
+============================================================
+  Transports:
+    opencode = local `opencode serve` sessions (stateful, no api_key)
+    openai   = any OpenAI-compatible chat completions endpoint
+
+  Transport (opencode/openai)
+  Default: local opencode server (no credentials needed).
+  Run first: opencode serve --port 4096
+  Model format: provider/model (e.g. opencode/beam-free)
+  Tip: pick a judge model DIFFERENT from both debaters for neutrality.
+
+  --- Agent: Proposer (put forward positions & arguments) ---
+    Display name    Server URL    Restricted agent ('-' = none; 'debater' = websearch only)    Model
+  --- Agent: Critic (evaluate, find gaps, agree/disagree) ---
+    Display name    Server URL    Restricted agent ('-' = none; 'debater' = websearch only)    Model
+  --- Agent: Judge (neutral — score consensus each round) ---
+    Display name    Server URL    Restricted agent ('-' = none; 'debater' = websearch only)    Model
+    Max discussion rounds  Config saved: <TMP>\config.json
+  Websearch agent installed: <TMP>\agents\debater.md
+  (restart opencode serve to load it)
+CONFIG: {"agents": {"critic": {"agent": "debater", "api_url": "http://127.0.0.1:4096", "model": "opencode/beam-free", "name": "Critic", "transport": "opencode"}, "judge": {"agent": "debater", "api_url": "http://127.0.0.1:4096", "model": "opencode/deepseek-v4.1-flash-free", "name": "Judge", "transport": "opencode"}, "proposer": {"agent": "debater", "api_url": "http://127.0.0.1:4096", "model": "opencode/longcat-2.5-preview-free", "name": "Proposer", "transport": "opencode"}}, "max_rounds": 3}
+=== EXC ===
+
+=== TRANSCRIPT ===
+
+=== REC ===
+sessions: []
+deletes: 0
+msgs: []

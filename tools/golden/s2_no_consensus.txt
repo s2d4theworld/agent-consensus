@@ -1,0 +1,50 @@
+=== STDOUT ===
+
+  Topic: S2 topic
+  Max rounds: 1
+
+
+  [Model] P (opencode/x)  vs  C (opencode/x)
+  [Judge] J (opencode/x)
+  [Transport] opencode
+
+  [Round 1] P is thinking...
+
+  ===== [P] (opencode/x) =====
+Proposer: I defend the topic.
+
+  [Round 1] C is evaluating...
+
+  ===== [C] (opencode/x) =====
+Critic: I challenge the topic.
+
+  [Judge: J (opencode/x)] NO - still far apart.
+
+============================================================
+  Final status : NO CONSENSUS (hit max rounds)
+  Duration     : <N> sec, 1 rounds
+  Transcript   : <TMP>\transcripts\discussion_<TS>.txt
+============================================================
+=== EXC ===
+
+=== TRANSCRIPT ===
+TOPIC: S2 topic
+START: <T>
+JUDGE: J (opencode/x)
+============================================================
+
+--- Round 1 ---
+[P]
+Proposer: I defend the topic.
+
+[C]
+Critic: I challenge the topic.
+
+============================================================
+STATUS: NO CONSENSUS (hit max rounds)
+JUDGE NOTE: NO - still far apart.
+DURATION: <N>s
+=== REC ===
+sessions: ['agent-consensus proposer <TS>', 'agent-consensus critic <TS>', 'agent-consensus judge <TS>']
+deletes: 3
+msgs: [('ses_fake0001test2018', 'msg_fake0001test_t0', 'debater', 'Discussion topic: S2 topic\nStart the discussion now.'), ('ses_fake0002test2018', 'msg_fake0002test_t0', 'debater', 'Discussion topic: S2 topic\nStart the discussion now.\n\n[P]: Proposer: I defend the topic.'), ('ses_fake0003test2018', 'msg_fake0003test_t0', None, 'TOPIC: S2 topic\n\nHere is the transcript:\n\n[P]:\nProposer: I defend the topic.\n\n[C]:\nCritic: I challenge the topic.')]

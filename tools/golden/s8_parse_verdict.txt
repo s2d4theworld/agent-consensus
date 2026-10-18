@@ -1,0 +1,19 @@
+=== STDOUT ===
+'YES - agree' -> True
+'yes' -> True
+'NO.' -> False
+'  No because' -> False
+'maybe yes later' -> True
+'Absolutely not' -> False
+'' -> False
+'NOtable difference' -> False
+'YESmen not' -> False
+'Final: YES' -> True
+=== EXC ===
+
+=== TRANSCRIPT ===
+
+=== REC ===
+sessions: []
+deletes: 0
+msgs: []
