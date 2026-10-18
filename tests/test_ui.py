@@ -5,10 +5,12 @@ import json
 import os
 import sys
 import unittest
+from unittest import mock
 
 import ac_config
+import ac_transports
 import ac_ui
-from helpers import QuietRunMixin, oc_cfg
+from helpers import FakeServer, QuietRunMixin, oc_cfg
 
 
 class TestUi(QuietRunMixin, unittest.TestCase):
@@ -48,6 +50,29 @@ class TestUi(QuietRunMixin, unittest.TestCase):
             ac_ui.print_status(oc_cfg("http://127.0.0.1:1", with_judge=False, agent=None),
                                None)
         self.assertIn("Judge: none configured - proposer will judge", buf.getvalue())
+
+    def test_restricted_agent_lines_states(self):
+        srv = FakeServer()
+        self.addCleanup(srv.stop)
+        cfg = oc_cfg(srv.base)
+        lines = ac_ui.restricted_agent_lines(cfg)
+        self.assertEqual(lines, [f"  Restricted agent 'debater': active on {srv.base}"])
+
+        srv.agent_names.clear()
+        ac_transports._AGENT_LIST_CACHE.clear()
+        lines = ac_ui.restricted_agent_lines(cfg)
+        self.assertEqual(len(lines), 1)
+        self.assertIn("missing on", lines[0])
+
+        cfg_down = oc_cfg("http://127.0.0.1:1")
+        ac_transports._AGENT_LIST_CACHE.clear()
+        with mock.patch.object(ac_transports, "oc_agent_list", return_value=None):
+            lines = ac_ui.restricted_agent_lines(cfg_down)
+        self.assertIn("unreachable", lines[0])
+
+        cfg_none = oc_cfg(srv.base, agent=None)
+        self.assertEqual(ac_ui.restricted_agent_lines(cfg_none),
+                         ["  Restricted agent: none configured (no websearch for debaters)"])
 
 
 if __name__ == "__main__":

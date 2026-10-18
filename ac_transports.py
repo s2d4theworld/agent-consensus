@@ -15,8 +15,6 @@ from typing import Any
 from ac_config import (
     AgentCfg,
     AGENT_LIST_TTL,
-    Config,
-    INSTALL_HINT,
     MESSAGE_ID_TPL,
     RETRY_500_WAITS,
     RETRY_CONN_WAITS,
@@ -28,10 +26,8 @@ from ac_config import (
     TIMEOUT_DEFAULT,
     TIMEOUT_LIST,
     TIMEOUT_MESSAGE,
-    TIMEOUT_MENU,
     TIMEOUT_SESSION,
     TS_FORMAT,
-    is_opencode,
 )
 from ac_errors import TransportError
 
@@ -225,33 +221,3 @@ def oc_agent_list_cached(base_url: str, timeout: float = TIMEOUT_LIST,
     names = oc_agent_list(base_url, timeout)
     _AGENT_LIST_CACHE[base_url] = (time.time(), names)
     return names
-
-def restricted_agents_by_base(cfg: Config) -> dict[str, set[str]]:
-    # {base_url: {agent names}} of restricted (websearch) agents per server
-    by_base: dict[str, set[str]] = {}
-    for a in cfg["agents"].values():
-        if not is_opencode(a):
-            continue
-        name = a.get("agent")
-        if name:
-            by_base.setdefault(oc_base_url(a), set()).add(name)
-    return by_base
-
-def restricted_agent_lines(cfg: Config) -> list[str]:
-    # menu status lines for the restricted (websearch) agents per server
-    by_base = restricted_agents_by_base(cfg)
-    if not by_base:
-        return ["  Restricted agent: none configured (no websearch for debaters)"]
-    lines = []
-    for base, names in sorted(by_base.items()):
-        avail = oc_agent_list_cached(base, timeout=TIMEOUT_MENU)
-        for name in sorted(names):
-            if avail is None:
-                lines.append(f"  Restricted agent '{name}': {base} unreachable "
-                             "(is `opencode serve` running?)")
-            elif name in avail:
-                lines.append(f"  Restricted agent '{name}': active on {base}")
-            else:
-                lines.append(f"  Restricted agent '{name}': missing on {base} "
-                             f"({INSTALL_HINT})")
-    return lines

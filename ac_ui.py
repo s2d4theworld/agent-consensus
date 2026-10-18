@@ -3,16 +3,19 @@ from ac_config import (
     AgentCfg,
     Config,
     DEFAULT_MAX_ROUNDS,
+    INSTALL_HINT,
     ROLES,
     ROLE_CRITIC,
     ROLE_JUDGE,
     ROLE_PROPOSER,
+    TIMEOUT_MENU,
     TRANSPORT_OPENCODE,
     TRANSPORT_OPENAI,
     ensure_agent_installed,
+    is_opencode,
     save_config,
 )
-from ac_transports import restricted_agent_lines
+from ac_transports import oc_agent_list_cached, oc_base_url
 
 ROLE_DESCRIPTIONS: dict[str, str] = {
     ROLE_PROPOSER: "Proposer (put forward positions & arguments)",
@@ -114,6 +117,36 @@ def setup_wizard() -> None:
     save_config(cfg)
     if transport == TRANSPORT_OPENCODE:
         ensure_agent_installed()
+
+def restricted_agents_by_base(cfg: Config) -> dict[str, set[str]]:
+    # {base_url: {agent names}} of restricted (websearch) agents per server
+    by_base: dict[str, set[str]] = {}
+    for a in cfg["agents"].values():
+        if not is_opencode(a):
+            continue
+        name = a.get("agent")
+        if name:
+            by_base.setdefault(oc_base_url(a), set()).add(name)
+    return by_base
+
+def restricted_agent_lines(cfg: Config) -> list[str]:
+    # menu status lines for the restricted (websearch) agents per server
+    by_base = restricted_agents_by_base(cfg)
+    if not by_base:
+        return ["  Restricted agent: none configured (no websearch for debaters)"]
+    lines = []
+    for base, names in sorted(by_base.items()):
+        avail = oc_agent_list_cached(base, timeout=TIMEOUT_MENU)
+        for name in sorted(names):
+            if avail is None:
+                lines.append(f"  Restricted agent '{name}': {base} unreachable "
+                             "(is `opencode serve` running?)")
+            elif name in avail:
+                lines.append(f"  Restricted agent '{name}': active on {base}")
+            else:
+                lines.append(f"  Restricted agent '{name}': missing on {base} "
+                             f"({INSTALL_HINT})")
+    return lines
 
 def print_status(cfg: Config | None, err: str | None) -> None:
     if cfg and not err:
