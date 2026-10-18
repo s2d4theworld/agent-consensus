@@ -207,7 +207,7 @@ def oc_agent_list(base_url: str, timeout: float = TIMEOUT_LIST) -> set[str] | No
         return None
     names: set[str] = set()
     for a in data:
-        if isinstance(a, dict) and isinstance(a.get("name"), str):
+        if isinstance(a, dict) and isinstance(a.get("name"), str) and a["name"]:
             names.add(a["name"])
     return names
 

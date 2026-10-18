@@ -133,5 +133,5 @@ requests), replay the golden scenarios:
 Goldens live in `tools/golden/`; temp paths, timestamps, durations and
 ephemeral ports are normalized before comparison.
 
-The codebase is linted with pylint (`.pylintrc`) and type-checked with mypy
-(`mypy.ini`) on every push via GitHub Actions (`.github/workflows/`).
+CI (`.github/workflows/`) runs the test suite, the golden check, pylint
+(`.pylintrc`) and mypy (`mypy.ini`) on every push.
