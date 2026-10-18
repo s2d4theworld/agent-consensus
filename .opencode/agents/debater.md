@@ -1,5 +1,5 @@
 ---
-description: Restricted agent for debate bots: web search only; no shell, file writes, or subagents
+description: "Restricted agent for debate bots: web search only; no shell, file writes, or subagents"
 mode: subagent
 hidden: true
 steps: 2
