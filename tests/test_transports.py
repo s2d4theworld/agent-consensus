@@ -106,6 +106,23 @@ class TestTransports(unittest.TestCase):
         ac_transports.oc_sweep(srv.base)
         self.assertEqual(srv.deletes, [])
 
+    def test_oc_sweep_prefers_last_activity(self):
+        srv = FakeServer()
+        self.addCleanup(srv.stop)
+        now_ms = int(time.time() * 1000)
+        old_ts = time.strftime("%Y%m%d_%H%M%S", time.localtime(time.time() - 3600))
+        srv.session_list[:] = [
+            # live parallel run: old title, recent activity -> kept
+            {"id": "ses_live0001test2018", "title": f"agent-consensus proposer {old_ts}",
+             "time": {"created": now_ms - 3600_000, "updated": now_ms}},
+            # crashed run: old title, stale activity -> swept
+            {"id": "ses_dead0001test2018", "title": f"agent-consensus critic {old_ts}",
+             "time": {"created": now_ms - 3600_000, "updated": now_ms - 3600_000}},
+        ]
+        ac_transports.oc_sweep(srv.base)
+        self.assertNotIn("/session/ses_live0001test2018", srv.deletes)
+        self.assertIn("/session/ses_dead0001test2018", srv.deletes)
+
     def test_oc_send_error_envelope(self):
         srv = FakeServer()
         self.addCleanup(srv.stop)

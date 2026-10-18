@@ -107,15 +107,16 @@ def check_stateless_endpoints(cfg: Config) -> None:
         if url in seen:
             continue
         seen.add(url)
-        parts = urllib.parse.urlsplit(url)
-        if not parts.hostname:
-            continue
         try:
+            parts = urllib.parse.urlsplit(url)
+            hostname = parts.hostname
             port = parts.port or (443 if parts.scheme == "https" else 80)
         except ValueError:
-            continue  # nonnumeric port: the request itself will complain later
+            continue  # malformed URL/port: the request itself will complain later
+        if not hostname:
+            continue
         try:
-            socket.create_connection((parts.hostname, port),
+            socket.create_connection((hostname, port),
                                      timeout=TIMEOUT_PREFLIGHT).close()
         except OSError as e:
             if isinstance(e, ConnectionRefusedError) or getattr(e, "winerror", None) == 10061:

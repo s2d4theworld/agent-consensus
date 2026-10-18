@@ -170,9 +170,10 @@ def oc_delete(agent_cfg: AgentCfg, session_id: str) -> None:
 
 def oc_sweep(base_url: str, prefix: str = SESSION_TITLE_PREFIX,
              min_age: float = SWEEP_MIN_AGE) -> None:
-    # best-effort: delete orphan sessions left by crashed runs. Sessions whose
-    # title timestamp is fresh are skipped, so a parallel run against the same
-    # server is not disturbed; unparseable titles count as old orphans.
+    # best-effort: delete orphan sessions left by crashed runs. Sessions with
+    # recent activity are skipped, so a live parallel run is not disturbed;
+    # without a usable timestamp the title's creation time is the fallback,
+    # and unparseable titles count as old orphans.
     try:
         data = http_get_json(base_url + "/session", TIMEOUT_LIST)
     except Exception:
@@ -186,10 +187,15 @@ def oc_sweep(base_url: str, prefix: str = SESSION_TITLE_PREFIX,
         if not (sid and title.startswith(prefix)):
             continue
         when = 0.0
-        try:
-            when = time.mktime(time.strptime(title.rsplit(" ", 1)[-1], "%Y%m%d_%H%M%S"))
-        except ValueError:
-            pass
+        stamp = s.get("time")
+        updated = stamp.get("updated") if isinstance(stamp, dict) else None
+        if isinstance(updated, (int, float)) and updated > 0:
+            when = updated / 1000.0  # ms epoch: last server-side activity
+        else:
+            try:  # older servers: fall back to the title's creation time
+                when = time.mktime(time.strptime(title.rsplit(" ", 1)[-1], "%Y%m%d_%H%M%S"))
+            except ValueError:
+                pass
         if now - when >= min_age:
             oc_delete_url(base_url, sid)
 
@@ -199,7 +205,7 @@ def oc_agent_list(base_url: str, timeout: float = TIMEOUT_LIST) -> set[str] | No
         data = http_get_json(base_url + "/agent", timeout)
     except Exception:
         return None
-    return {a.get("name") for a in data if isinstance(a, dict)}
+    return {a.get("name") for a in data if isinstance(a, dict) and a.get("name")}
 
 # base_url -> (checked_at, names or None)
 _AGENT_LIST_CACHE: dict[str, tuple[float, set[str] | None]] = {}

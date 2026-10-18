@@ -42,7 +42,9 @@ TIMEOUT_LIST = 15        # session list / delete / sweep
 TIMEOUT_MENU = 4         # agent list from the interactive menu (stay snappy)
 TIMEOUT_PREFLIGHT = 3    # TCP preflight per stateless endpoint
 AGENT_LIST_TTL = 5       # menu may reuse a recent agent-list lookup (seconds)
-SWEEP_MIN_AGE = 120      # orphan sweep skips sessions newer than this (seconds)
+# orphan sweep: skip sessions with activity newer than this (seconds); a
+# crashed run goes quiet, a parallel run keeps refreshing time.updated
+SWEEP_MIN_AGE = 300
 SESSION_TITLE_PREFIX = "agent-consensus "  # the sweep recognizes titles by it
 # deterministic message id: {sid} = session id without the "ses_" prefix, cut
 # to 12 chars; retries after a lost response are deduped by the server
