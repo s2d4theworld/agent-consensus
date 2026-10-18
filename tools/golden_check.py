@@ -128,6 +128,7 @@ def s8_parse_verdict(_ctx):
 # ---------- runner ----------
 def normalize(text, root):
     text = text.replace(root, "<TMP>")
+    text = text.replace("\\", "/")  # goldens use "/" on every platform
     text = re.sub(r"Duration     : \d+ sec", "Duration     : <N> sec", text)
     text = re.sub(r"DURATION: \d+s", "DURATION: <N>s", text)
     text = re.sub(r"\d{8}_\d{6}", "<TS>", text)

@@ -25,7 +25,7 @@ Critic: I challenge the topic.
 ============================================================
   Final status : CONSENSUS
   Duration     : <N> sec, 1 rounds
-  Transcript   : <TMP>\transcripts\discussion_<TS>.txt
+  Transcript   : <TMP>/transcripts/discussion_<TS>.txt
 ============================================================
 === EXC ===
 
