@@ -64,18 +64,18 @@ def post_json(url: str, payload: dict[str, Any],
             elif e.code == 500 and attempt < len(RETRY_500_WAITS):
                 wait = RETRY_500_WAITS[attempt]
             else:
-                raise TransportError(last_err)
+                raise TransportError(last_err) from e
             print(f"    [retry {attempt+1}] {e.code}, waiting {wait}s...", flush=True)
             time.sleep(wait)
         except (TimeoutError, ConnectionError, urllib.error.URLError, socket.timeout) as e:
             last_err = f"connection: {e}"
             if attempt >= len(RETRY_CONN_WAITS):
-                raise TransportError(last_err)
+                raise TransportError(last_err) from e
             wait = RETRY_CONN_WAITS[attempt]
             print(f"    [retry {attempt+1}] connection failed, waiting {wait}s...", flush=True)
             time.sleep(wait)
         except Exception as e:
-            raise TransportError(f"request failed: {e}")
+            raise TransportError(f"request failed: {e}") from e
     raise TransportError(last_err or "request failed")
 
 def strip_control_tokens(text: str) -> str:

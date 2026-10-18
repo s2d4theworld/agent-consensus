@@ -18,7 +18,7 @@ class TestTransports(unittest.TestCase):
     def test_agent_list_cache_ttl(self):
         calls = {"n": 0}
 
-        def fake_list(base_url, timeout=ac_config.TIMEOUT_LIST):
+        def fake_list(_base_url, _timeout=ac_config.TIMEOUT_LIST):
             calls["n"] += 1
             return {"debater"}
 

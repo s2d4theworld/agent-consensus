@@ -77,7 +77,7 @@ def s3_missing_agent(ctx):
 
 
 @scenario
-def s4_unreachable(ctx):
+def s4_unreachable(_ctx):
     agent_consensus.safe_run_discussion(
         oc_cfg("http://127.0.0.1:1"), topic="S4 topic")
 
@@ -117,7 +117,7 @@ def s7_wizard_opencode(ctx):
 
 
 @scenario
-def s8_parse_verdict(ctx):
+def s8_parse_verdict(_ctx):
     cases = ["YES - agree", "yes", "NO.", "  No because", "maybe yes later",
              "Absolutely not", "", "NOtable difference", "YESmen not", "Final: YES"]
     for c in cases:

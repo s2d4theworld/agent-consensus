@@ -119,7 +119,7 @@ def check_stateless_endpoints(cfg: Config) -> None:
                                      timeout=TIMEOUT_PREFLIGHT).close()
         except OSError as e:
             if isinstance(e, ConnectionRefusedError) or getattr(e, "winerror", None) == 10061:
-                raise ServerUnreachable(f"cannot reach {url} - connection refused")
+                raise ServerUnreachable(f"cannot reach {url} - connection refused") from e
             print(f"  [Warn] {url} not reachable directly ({e}) - trying anyway")
 
 def resolve_restricted_agents(cfg: Config, available: Available) -> EffectiveAgents:
@@ -230,11 +230,13 @@ class Discussion:
 
     def start(self) -> None:
         # [Model]/[Judge]/[Transport] lines + the transcript header
-        self.started_at = time.time()
+        self.started_at = time.time()  # pylint: disable=attribute-defined-outside-init
         print(f"\n  [Model] {self.proposer['name']} ({self.proposer['model']})  vs  "
               f"{self.critic['name']} ({self.critic['model']})")
         print(f"  [Judge] {self.judge['name']} ({self.judge['model']})")
-        print(f"  [Transport] {', '.join(sorted({transport_of(a) for a in (self.proposer, self.critic, self.judge)}))}\n")
+        transports = sorted({transport_of(a)
+                             for a in (self.proposer, self.critic, self.judge)})
+        print(f"  [Transport] {', '.join(transports)}\n")
         with open(self.path, "w", encoding="utf-8") as tf:
             tf.write(f"TOPIC: {self.topic}\nSTART: {time.ctime()}\n")
             tf.write(f"JUDGE: {self.judge['name']} ({self.judge['model']})\n{'='*60}\n\n")

@@ -1,0 +1,30 @@
+# Pylint configuration for agent-consensus.
+#
+# The project deliberately diverges from pylint defaults in these ways:
+# - no docstrings: modules use section comments instead
+# - invalid-name: framework-mandated names (do_GET/do_POST/setUp/tearDown)
+# - wrong-import-position/order: tests and tools set sys.path before imports
+# - protected-access: tests intentionally poke module internals
+# - broad-exception-caught: best-effort paths (orphan sweep, judge failure,
+#   abort guard) must not take the process down
+
+[MESSAGES CONTROL]
+disable=missing-module-docstring,
+        missing-class-docstring,
+        missing-function-docstring,
+        invalid-name,
+        wrong-import-position,
+        wrong-import-order,
+        protected-access,
+        broad-exception-caught
+
+[DESIGN]
+max-args=6
+max-positional-arguments=6
+max-attributes=16
+max-statements=60
+max-returns=8
+min-public-methods=1
+
+[FORMAT]
+max-line-length=100

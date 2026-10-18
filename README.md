@@ -132,3 +132,6 @@ requests), replay the golden scenarios:
 
 Goldens live in `tools/golden/`; temp paths, timestamps, durations and
 ephemeral ports are normalized before comparison.
+
+The codebase is linted with pylint on every push via GitHub Actions
+(`.github/workflows/pylint.yml`, settings in `.pylintrc`).
