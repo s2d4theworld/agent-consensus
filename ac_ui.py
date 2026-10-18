@@ -55,7 +55,8 @@ def input_optional(prompt: str, default: str = "") -> str:
 
 def _prompt_agent(key: str, transport: str) -> AgentCfg:
     print(f"  --- Agent: {ROLE_DESCRIPTIONS[key]} ---")
-    a: AgentCfg = {"transport": transport}  # required keys are filled in below
+    # required keys are placeholder-filled here and set by the prompts below
+    a: AgentCfg = {"name": "", "api_url": "", "model": "", "transport": transport}
     a["name"] = input_optional("    Display name", DEFAULT_NAMES[key])
     if transport == TRANSPORT_OPENCODE:
         a["api_url"] = input_optional("    Server URL", "http://127.0.0.1:4096")

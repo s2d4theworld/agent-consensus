@@ -19,6 +19,7 @@ import re
 import shutil
 import sys
 import tempfile
+from typing import Any
 
 TOOLS_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(TOOLS_DIR)
@@ -34,7 +35,7 @@ import ac_ui
 import agent_consensus
 from ac_engine import parse_verdict, run_discussion
 
-SCENARIOS = {}
+SCENARIOS: dict[str, Any] = {}
 
 
 def scenario(fn):

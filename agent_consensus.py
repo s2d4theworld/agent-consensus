@@ -21,8 +21,8 @@ import sys
 
 # model output may contain characters the console codepage can't encode
 try:
-    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    for stream in (sys.stdout, sys.stderr):
+        stream.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[union-attr]
 except Exception:
     pass
 

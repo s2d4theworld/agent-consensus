@@ -205,7 +205,11 @@ def oc_agent_list(base_url: str, timeout: float = TIMEOUT_LIST) -> set[str] | No
         data = http_get_json(base_url + "/agent", timeout)
     except Exception:
         return None
-    return {a.get("name") for a in data if isinstance(a, dict) and a.get("name")}
+    names: set[str] = set()
+    for a in data:
+        if isinstance(a, dict) and isinstance(a.get("name"), str):
+            names.add(a["name"])
+    return names
 
 # base_url -> (checked_at, names or None)
 _AGENT_LIST_CACHE: dict[str, tuple[float, set[str] | None]] = {}
@@ -222,7 +226,7 @@ def oc_agent_list_cached(base_url: str, timeout: float = TIMEOUT_LIST,
 
 def restricted_agents_by_base(cfg: Config) -> dict[str, set[str]]:
     # {base_url: {agent names}} of restricted (websearch) agents per server
-    by_base = {}
+    by_base: dict[str, set[str]] = {}
     for a in cfg["agents"].values():
         if not is_opencode(a):
             continue

@@ -173,8 +173,9 @@ def build_prompts(topic: str, proposer: AgentCfg, critic: AgentCfg,
     return proposer_sys, critic_sys
 
 class SessionState(TypedDict):
-    # OpencodeSessions bookkeeping for one session role
-    id: str | None
+    # OpencodeSessions bookkeeping for one session role; id is "" until the
+    # session is created
+    id: str
     started: bool
     sent: int
     cfg_key: str
@@ -189,9 +190,9 @@ class OpencodeSessions:
         self.state: dict[str, SessionState] = {}
 
     def ensure(self, sess_key: str, cfg_key: str, title: str) -> SessionState:
-        st = self.state.setdefault(sess_key, {"id": None, "started": False,
+        st = self.state.setdefault(sess_key, {"id": "", "started": False,
                                               "sent": 0, "cfg_key": cfg_key})
-        if st["id"] is None:
+        if not st["id"]:
             st["id"] = oc_session_create(self.cfg["agents"][cfg_key], title)
         return st
 
