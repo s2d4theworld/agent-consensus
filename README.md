@@ -28,6 +28,11 @@ Then run `python agent_consensus.py setup` and accept the defaults:
 - Critic = `opencode/beam-free`
 - Judge = `opencode/deepseek-v4.1-flash-free` (verified YES/NO verdicts)
 
+These are the free models that existed when this repo was made. Free model
+rosters change at any time and nothing here guarantees availability at any
+point in the future: when a model starts failing (e.g. 404/503 from the
+server), re-run `setup` and configure a model your server currently offers.
+
 Model format is `provider/model` from the local server. Each role gets its
 own session (`agent-consensus <role> <timestamp>`), deleted when the run
 ends; orphans from crashed runs are swept at the next start. The judge is
@@ -67,9 +72,11 @@ Notes from testing the serve API:
 - Do NOT send a `tools` field: free-tier models reject it with a 403
   (the script never does; prompts also tell models to reply text-only).
 - `system` per message works and carries the role prompts.
-- Free models on provider `opencode`: longcat-2.5-preview-free, beam-free,
-  deepseek-v4.1-flash-free, glm-5.3-flash-free, space-bunny-free,
-  mimo-v2.6-flash-free (nemotron-3-ultra-free was 503 upstream).
+- Free models on provider `opencode` at the time of writing:
+  longcat-2.5-preview-free, beam-free, deepseek-v4.1-flash-free,
+  glm-5.3-flash-free, space-bunny-free, mimo-v2.6-flash-free
+  (nemotron-3-ultra-free was 503 upstream). This roster is a snapshot from
+  when the repo was made, not a promise of future availability.
 
 ## Usage
 
@@ -86,7 +93,8 @@ Pick `openai` in the wizard to use any chat-completions endpoint
 (`hermes proxy start --provider nous`; any bearer token works — the proxy
 attaches the real credentials). Empty api_key = env var
 `CONSENSUS_API_KEY_<ROLE>` (`CONSENSUS_API_KEY_PROPOSER` / `_CRITIC` /
-`_JUDGE`). Suggested free proxy models: proposer =
+`_JUDGE`). Example free proxy models from when this repo was made
+(availability is not guaranteed — re-pick if they disappear): proposer =
 `meituan/longcat-2.5-preview:free`, critic =
 `reflection/beam-1.0-501b-a23b:free`, judge = `poolside/laguna-s-2.1:free`.
 
