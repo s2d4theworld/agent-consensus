@@ -30,14 +30,14 @@ class FakeServer:
     # minimal stand-in for `opencode serve` + a chat-completions endpoint
     def __init__(self, agent_names=("debater",)):
         self.agent_names = list(agent_names)
-        self.verdicts = []
-        self.session_list = []   # returned by GET /session (seeded orphans)
-        self.sessions = []       # created via POST /session
-        self.msgs = []
-        self.deletes = []
-        self.chats = []
-        self.retry_codes = []    # status codes to fail the next POSTs with
-        self.message_error = None  # if set, /message returns this error envelope
+        self.verdicts: list[str] = []
+        self.session_list: list[dict] = []  # returned by GET /session (seeded orphans)
+        self.sessions: list[dict] = []      # created via POST /session
+        self.msgs: list[dict] = []
+        self.deletes: list[str] = []
+        self.chats: list[dict] = []
+        self.retry_codes: list[int] = []    # status codes to fail the next POSTs with
+        self.message_error: dict | None = None  # set: /message returns this envelope
         self._counter = 0
         srv = self
 

@@ -12,12 +12,14 @@ from ac_config import (
     AgentCfg,
     Config,
     DEFAULT_MAX_ROUNDS,
+    INSTALL_HINT,
     ROLES,
     ROLE_CRITIC,
     ROLE_JUDGE,
     ROLE_PROPOSER,
     SESSION_TITLE_PREFIX,
     TIMEOUT_PREFLIGHT,
+    TS_FORMAT,
     is_opencode,
     transport_of,
 )
@@ -139,8 +141,7 @@ def resolve_restricted_agents(cfg: Config, available: Available) -> EffectiveAge
         if (base, name) not in warned:
             print(f"  [Warn] agent '{name}' not on {base} - using the default "
                   "agent without tools.")
-            print("  [Warn] run: python agent_consensus.py install-agent, "
-                  "then restart opencode serve.")
+            print(f"  [Warn] {INSTALL_HINT}.")
             warned.add((base, name))
         agent_eff[key] = None
     return agent_eff
@@ -226,7 +227,7 @@ class Discussion:
             topic, self.proposer, self.critic, self.agent_eff)
         self.sessions = OpencodeSessions(cfg)
         self.turns: Turns = []
-        self.ts = time.strftime("%Y%m%d_%H%M%S")
+        self.ts = time.strftime(TS_FORMAT)
         self.path = os.path.join(ac_config.TRANSCRIPT_DIR, f"discussion_{self.ts}.txt")
         self.initial_msg = f"Discussion topic: {topic}\nStart the discussion now."
 

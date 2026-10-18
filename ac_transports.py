@@ -16,6 +16,7 @@ from ac_config import (
     AgentCfg,
     AGENT_LIST_TTL,
     Config,
+    INSTALL_HINT,
     MESSAGE_ID_TPL,
     RETRY_500_WAITS,
     RETRY_CONN_WAITS,
@@ -29,6 +30,7 @@ from ac_config import (
     TIMEOUT_MESSAGE,
     TIMEOUT_MENU,
     TIMEOUT_SESSION,
+    TS_FORMAT,
     is_opencode,
 )
 from ac_errors import TransportError
@@ -193,7 +195,7 @@ def oc_sweep(base_url: str, prefix: str = SESSION_TITLE_PREFIX,
             when = updated / 1000.0  # ms epoch: last server-side activity
         else:
             try:  # older servers: fall back to the title's creation time
-                when = time.mktime(time.strptime(title.rsplit(" ", 1)[-1], "%Y%m%d_%H%M%S"))
+                when = time.mktime(time.strptime(title.rsplit(" ", 1)[-1], TS_FORMAT))
             except ValueError:
                 pass
         if now - when >= min_age:
@@ -251,6 +253,5 @@ def restricted_agent_lines(cfg: Config) -> list[str]:
                 lines.append(f"  Restricted agent '{name}': active on {base}")
             else:
                 lines.append(f"  Restricted agent '{name}': missing on {base} "
-                             "(run: python agent_consensus.py install-agent, then "
-                             "restart opencode serve)")
+                             f"({INSTALL_HINT})")
     return lines

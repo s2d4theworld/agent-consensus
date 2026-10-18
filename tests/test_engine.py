@@ -3,6 +3,7 @@
 import os
 import time
 import unittest
+from typing import Any
 from unittest import mock
 
 import ac_engine
@@ -13,10 +14,15 @@ from helpers import FakeServer, QuietRunMixin, closed_port, oc_cfg, stateless_cf
 
 class TestParseMaxRounds(unittest.TestCase):
     def test_parse_max_rounds(self):
-        self.assertEqual(parse_max_rounds({}), 10)
-        self.assertEqual(parse_max_rounds({"max_rounds": "3"}), 3)
-        self.assertEqual(parse_max_rounds({"max_rounds": 0}), 1)
-        self.assertEqual(parse_max_rounds({"max_rounds": "junk"}), 10)
+        # deliberately malformed configs must not crash the parser
+        cases: list[tuple[Any, int]] = [
+            ({}, 10),
+            ({"max_rounds": "3"}, 3),
+            ({"max_rounds": 0}, 1),
+            ({"max_rounds": "junk"}, 10),
+        ]
+        for cfg, expected in cases:
+            self.assertEqual(parse_max_rounds(cfg), expected)
 
 
 class TestParseVerdict(unittest.TestCase):

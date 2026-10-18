@@ -46,9 +46,12 @@ AGENT_LIST_TTL = 5       # menu may reuse a recent agent-list lookup (seconds)
 # crashed run goes quiet, a parallel run keeps refreshing time.updated
 SWEEP_MIN_AGE = 300
 SESSION_TITLE_PREFIX = "agent-consensus "  # the sweep recognizes titles by it
+TS_FORMAT = "%Y%m%d_%H%M%S"  # run-start stamp appended to session titles
 # deterministic message id: {sid} = session id without the "ses_" prefix, cut
 # to 12 chars; retries after a lost response are deduped by the server
 MESSAGE_ID_TPL = "msg_{sid}_t{turn}"
+# advice shown when a configured restricted (websearch) agent is missing
+INSTALL_HINT = "run: python agent_consensus.py install-agent, then restart opencode serve"
 
 # post_json retry policy
 RETRY_HTTP_CODES = (429, 502, 503)   # transient upstream errors

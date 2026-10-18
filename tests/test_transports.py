@@ -91,8 +91,9 @@ class TestTransports(unittest.TestCase):
         fake_time.sleep.assert_not_called()
 
     def test_chat_completion_requires_api_key(self):
-        agent = {"name": "X", "transport": "openai", "model": "m",
-                 "api_url": "http://127.0.0.1:1/v1/chat/completions"}
+        agent: ac_config.AgentCfg = {
+            "name": "X", "transport": "openai", "model": "m",
+            "api_url": "http://127.0.0.1:1/v1/chat/completions"}
         with self.assertRaisesRegex(TransportError, "API key for agent 'nokeyrole'"):
             ac_transports.chat_completion("nokeyrole", agent, "sys", [])
 
@@ -102,7 +103,7 @@ class TestTransports(unittest.TestCase):
         srv.session_list[:] = [{"id": "ses_keep0001test2018", "title": "other"}]
         ac_transports.oc_sweep(srv.base)
         self.assertEqual(srv.deletes, [])
-        srv.session_list = {}  # a non-list response must not crash the sweep
+        srv.session_list = {}  # type: ignore[assignment]  # malformed: must not crash the sweep
         ac_transports.oc_sweep(srv.base)
         self.assertEqual(srv.deletes, [])
 
