@@ -106,6 +106,9 @@ class TestTransports(unittest.TestCase):
         srv.session_list = ["junk"]  # type: ignore[list-item]  # malformed item
         ac_transports.oc_sweep(srv.base)
         self.assertEqual(srv.deletes, [])
+        srv.session_list[:] = [{"id": "ses_keep0001test2018", "title": 5}]
+        ac_transports.oc_sweep(srv.base)
+        self.assertEqual(srv.deletes, [])
 
     def test_oc_sweep_prefers_last_activity(self):
         srv = FakeServer()

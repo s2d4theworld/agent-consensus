@@ -18,15 +18,12 @@ from typing import Any
 from ac_config import (
     AgentCfg,
     AGENT_LIST_TTL,
-    DEFAULT_TEMPERATURE_DEBATER,
-    DEFAULT_TEMPERATURE_JUDGE,
     MESSAGE_ID_TPL,
     RETRY_500_WAITS,
     RETRY_AFTER_MAX,
     RETRY_CONN_WAITS,
     RETRY_HTTP_CODES,
     RETRY_HTTP_WAITS,
-    ROLE_JUDGE,
     SESSION_TITLE_PREFIX,
     SWEEP_MIN_AGE,
     TIMEOUT_DEFAULT,
@@ -35,6 +32,7 @@ from ac_config import (
     TIMEOUT_SESSION,
     TS_FORMAT,
     api_key_env,
+    default_temperature,
 )
 from ac_errors import TransportError
 
@@ -73,9 +71,12 @@ def _retry_after(headers: Any) -> int | None:
             return None
     return max(0, min(ceil(delay), RETRY_AFTER_MAX))
 
+def _read_json_response(resp: Any) -> Any:
+    return json.loads(resp.read().decode("utf-8"))
+
 def http_get_json(url: str, timeout: float) -> Any:
     with urllib.request.urlopen(url, timeout=timeout) as resp:
-        return json.loads(resp.read().decode("utf-8"))
+        return _read_json_response(resp)
 
 def post_json(url: str, payload: dict[str, Any],
               headers: dict[str, str] | None = None,
@@ -91,7 +92,7 @@ def post_json(url: str, payload: dict[str, Any],
     for attempt in range(attempts):
         try:
             with urllib.request.urlopen(req, timeout=timeout) as resp:
-                return json.loads(resp.read().decode("utf-8"))
+                return _read_json_response(resp)
         except urllib.error.HTTPError as e:
             body = e.read().decode("utf-8", "replace")[:500]
             e.close()  # release the response socket; body is already read
@@ -134,8 +135,8 @@ def _oc_error(data: dict[str, Any]) -> None:
     if not isinstance(err, dict):
         raise TransportError(f"opencode: {err}")
     err_data = err.get("data")
-    detail = (err_data.get("message") if isinstance(err_data, dict) else None) \
-        or err.get("name") or "unknown error"
+    detail = ((err_data.get("message") if isinstance(err_data, dict) else None)
+              or err.get("name") or "unknown error")
     raise TransportError(f"opencode: {detail}")
 
 def _oc_text(parts: object, kind: str, where: str) -> str:
@@ -192,10 +193,7 @@ def chat_completion(agent_key: str, agent_cfg: AgentCfg, system_prompt: str,
         "model": agent_cfg["model"],
         "messages": [{"role": "system", "content": system_prompt}] + messages,
         # the judge should be deterministic; debaters benefit from some variety
-        "temperature": agent_cfg.get(
-            "temperature",
-            DEFAULT_TEMPERATURE_JUDGE if role == ROLE_JUDGE else DEFAULT_TEMPERATURE_DEBATER,
-        ),
+        "temperature": agent_cfg.get("temperature", default_temperature(role)),
     }
     where = agent_cfg["api_url"]
     data = post_json(where, payload, headers={"Authorization": f"Bearer {api_key}"})
@@ -293,9 +291,11 @@ def oc_sweep(base_url: str, prefix: str = SESSION_TITLE_PREFIX,
     for s in data:
         if not isinstance(s, dict):
             continue
-        title = s.get("title") or ""
+        title = s.get("title")
         sid = s.get("id")
-        if not (sid and title.startswith(prefix)):
+        if not (isinstance(title, str) and isinstance(sid, str) and sid):
+            continue
+        if not title.startswith(prefix):
             continue
         if now - _session_last_activity(s, title) >= min_age:
             _delete_session(base_url, sid)

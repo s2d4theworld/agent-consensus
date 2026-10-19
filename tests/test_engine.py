@@ -1,5 +1,7 @@
 # Tests for ac_engine: parsing helpers and the debate engines
 # (stateful opencode + stateless openai), including the fail-fast checks.
+import contextlib
+import io
 import os
 import time
 import unittest
@@ -93,9 +95,13 @@ class TestOpencodeEngine(QuietRunMixin, unittest.TestCase):
                 raise TransportError("opencode: boom")
             return orig(disc, key, sys_prompt)
 
+        buf = io.StringIO()
         with mock.patch.object(ac_engine.Discussion, "_request_turn", flaky):
-            with self.assertRaises(TransportError):
-                self.run_engine(oc_cfg(self.srv.base, max_rounds=2))
+            with contextlib.redirect_stdout(buf):
+                with self.assertRaises(TransportError):
+                    run_discussion(oc_cfg(self.srv.base, max_rounds=2),
+                                   topic="test topic")
+        self.assertIn(", 0 rounds", buf.getvalue())
         tfiles = [f for f in os.listdir(self._tdir) if f.endswith(".txt")]
         self.assertEqual(len(tfiles), 1)
         with open(os.path.join(self._tdir, tfiles[0]), encoding="utf-8") as f:
@@ -179,13 +185,14 @@ class TestOpencodeEngine(QuietRunMixin, unittest.TestCase):
         self.assertIn(f"/session/{sid}", self.srv.deletes)
         self.assertNotIn(f"/session/{fresh_sid}", self.srv.deletes)
 
-    def test_extra_agent_roles_warn(self):
+    def test_extra_agent_roles_warn_and_are_not_probed(self):
         cfg = oc_cfg(self.srv.base)
         cfg["agents"]["backup"] = {"name": "B", "transport": "opencode",
-                                   "api_url": self.srv.base, "model": "opencode/x"}
-        self.srv.verdicts[:] = ["YES - agree."]
+                                   "api_url": f"http://127.0.0.1:{closed_port()}",
+                                   "model": "opencode/x"}
         out = self.run_engine(cfg)
         self.assertIn("ignoring unknown agent role(s): backup", out)
+        self.assertIn("NO CONSENSUS", out)
 
     def test_unreachable_server_fails_fast(self):
         # real refused TCP connect (the sweep is already covered elsewhere)
@@ -218,10 +225,24 @@ class TestStatelessEngine(QuietRunMixin, unittest.TestCase):
         # the preflight must not crash on a nonnumeric port; the request itself
         # fails later with urllib's own error instead
         cfg = stateless_cfg("http://127.0.0.1:notaport/v1/chat/completions")
-        with self.assertRaises(TransportError) as cm:
-            run_discussion(cfg, topic="t")
+        with contextlib.redirect_stdout(io.StringIO()):
+            with self.assertRaises(TransportError) as cm:
+                run_discussion(cfg, topic="t")
         self.assertNotIn("connection refused", str(cm.exception))
         self.assertIn("request failed", str(cm.exception))
+
+    def test_extra_stateless_role_is_not_probed(self):
+        srv = FakeServer()
+        self.addCleanup(srv.stop)
+        cfg = stateless_cfg(srv.base + "/v1/chat/completions")
+        cfg["agents"]["backup"] = {
+            "name": "B", "transport": "openai", "api_key": "k",
+            "api_url": f"http://127.0.0.1:{closed_port()}/v1/chat/completions",
+            "model": "m",
+        }
+        out = self.run_engine(cfg)
+        self.assertIn("ignoring unknown agent role(s): backup", out)
+        self.assertIn("NO CONSENSUS", out)
 
     def test_temperature_defaults(self):
         srv = FakeServer()

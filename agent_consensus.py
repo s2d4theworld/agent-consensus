@@ -33,6 +33,10 @@ from ac_ui import banner, print_status, setup_wizard
 
 __version__ = "1.0.0"
 
+def _aborted(message: str) -> bool:
+    print(f"\n  Discussion aborted: {message}")
+    return False
+
 def safe_run_discussion(cfg: Config, topic: str | None = None) -> bool:
     # True = run completed, False = it was aborted/interrupted (the menu
     # stays interactive either way)
@@ -43,14 +47,11 @@ def safe_run_discussion(cfg: Config, topic: str | None = None) -> bool:
         print("\n  Interrupted.")
         return False
     except EOFError:
-        print("\n  Discussion aborted: no input available (stdin closed?)")
-        return False
+        return _aborted("no input available (stdin closed?)")
     except ConsensusError as e:
-        print(f"\n  Discussion aborted: {e}")
-        return False
+        return _aborted(str(e))
     except Exception as e:
-        print(f"\n  Discussion aborted: {type(e).__name__}: {e}")
-        return False
+        return _aborted(f"{type(e).__name__}: {e}")
 
 def run_wizard() -> None:
     # EOF/Ctrl+C mid-setup must not traceback; nothing is saved on abort

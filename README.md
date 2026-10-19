@@ -90,7 +90,8 @@ Notes from testing the serve API:
 ## openai transport (optional)
 
 Pick `openai` in the wizard to use any chat-completions endpoint
-(stateless). Example: a local proxy on `http://127.0.0.1:8645/v1`
+(stateless). Example: the full endpoint on a local proxy,
+`http://127.0.0.1:8645/v1/chat/completions`
 (`hermes proxy start --provider nous`; any bearer token works — the proxy
 attaches the real credentials). Empty api_key = env var
 `CONSENSUS_API_KEY_<ROLE>` (`CONSENSUS_API_KEY_PROPOSER` / `_CRITIC` /

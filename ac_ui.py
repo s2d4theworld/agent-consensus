@@ -3,8 +3,6 @@ from ac_config import (
     AgentCfg,
     Config,
     DEFAULT_MAX_ROUNDS,
-    DEFAULT_TEMPERATURE_DEBATER,
-    DEFAULT_TEMPERATURE_JUDGE,
     INSTALL_HINT,
     ROLES,
     ROLE_CRITIC,
@@ -17,8 +15,10 @@ from ac_config import (
     TRANSPORT_OPENAI,
     api_key_env,
     coerce_max_rounds,
+    default_temperature,
     ensure_agent_installed,
     is_opencode,
+    role_agents,
     save_config,
     valid_temperature,
 )
@@ -64,8 +64,7 @@ def input_optional(prompt: str, default: str = "") -> str:
     return v if v else default
 
 def _prompt_temperature(key: str) -> float:
-    default = (DEFAULT_TEMPERATURE_JUDGE if key == ROLE_JUDGE
-               else DEFAULT_TEMPERATURE_DEBATER)
+    default = default_temperature(key)
     raw = input_optional(
         f"    Temperature ({TEMPERATURE_MIN}-{TEMPERATURE_MAX})", str(default))
     try:
@@ -141,14 +140,15 @@ def setup_wizard() -> None:
     cfg: Config = {"agents": {key: _prompt_agent(key, transport) for key in ROLES}}
     cfg["max_rounds"] = coerce_max_rounds(
         input_optional("    Max discussion rounds", str(DEFAULT_MAX_ROUNDS)))
-    save_config(cfg)
+    if not save_config(cfg):
+        return
     if transport == TRANSPORT_OPENCODE:
         ensure_agent_installed()
 
 def restricted_agents_by_base(cfg: Config) -> dict[str, set[str]]:
     # {base_url: {agent names}} of restricted (websearch) agents per server
     by_base: dict[str, set[str]] = {}
-    for a in cfg["agents"].values():
+    for _, a in role_agents(cfg):
         if not is_opencode(a):
             continue
         name = a.get("agent")

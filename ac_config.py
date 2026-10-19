@@ -98,13 +98,17 @@ def _agent_error(key: str, agent: Any) -> str | None:
     for field in ("name", "api_url", "model"):
         if not agent.get(field):
             return f"agent '{key}' is missing '{field}'"
+        if not isinstance(agent[field], str):
+            return f"agent '{key}' field '{field}' must be a string"
     if "://" not in agent["api_url"]:
         return f"agent '{key}' field 'api_url' must be a full URL (http://...)"
     if agent.get("transport", TRANSPORT_OPENAI) not in (TRANSPORT_OPENCODE, TRANSPORT_OPENAI):
         return (f"agent '{key}' field 'transport' must be "
                 f"'{TRANSPORT_OPENCODE}' or '{TRANSPORT_OPENAI}'")
-    if agent.get("agent") is not None and not isinstance(agent.get("agent"), str):
-        return f"agent '{key}' field 'agent' must be a string"
+    for field in ("agent", "api_key"):
+        value = agent.get(field)
+        if value is not None and not isinstance(value, str):
+            return f"agent '{key}' field '{field}' must be a string"
     if "temperature" in agent and not valid_temperature(agent["temperature"]):
         return (f"agent '{key}' field 'temperature' must be a number "
                 f"between {TEMPERATURE_MIN} and {TEMPERATURE_MAX}")
@@ -116,17 +120,26 @@ def valid_temperature(value: object) -> bool:
         return False
     return isfinite(value) and TEMPERATURE_MIN <= value <= TEMPERATURE_MAX
 
-def save_config(cfg: Config) -> None:
-    with open(CONFIG_PATH, "w", encoding="utf-8") as f:
-        json.dump(cfg, f, indent=2, ensure_ascii=False)
+def default_temperature(role: str) -> float:
+    # the judge stays deterministic; debaters get some variety
+    return DEFAULT_TEMPERATURE_JUDGE if role == ROLE_JUDGE else DEFAULT_TEMPERATURE_DEBATER
+
+def save_config(cfg: Config) -> bool:
+    try:
+        with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+            json.dump(cfg, f, indent=2, ensure_ascii=False)
+    except OSError as e:
+        print(f"  [config] cannot save {CONFIG_PATH}: {e}")
+        return False
     print(f"  Config saved: {CONFIG_PATH}")
+    return True
 
 def coerce_max_rounds(value: Any) -> int:
     # one rule for config files and wizard input: malformed values fall back
     # to the default, a valid value is never below 1 round
     try:
         return max(1, int(value))
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return DEFAULT_MAX_ROUNDS
 
 def transport_of(agent_cfg: AgentCfg) -> str:
@@ -138,6 +151,10 @@ def api_key_env(agent_key: str) -> str:
 
 def is_opencode(agent_cfg: AgentCfg) -> bool:
     return transport_of(agent_cfg) == TRANSPORT_OPENCODE
+
+def role_agents(cfg: Config) -> list[tuple[str, AgentCfg]]:
+    # unknown roles in config.json are warned about and ignored
+    return [(key, agent) for key, agent in cfg["agents"].items() if key in ROLES]
 
 def ensure_agent_installed() -> bool:
     # copy the repo's restricted websearch agent into opencode's global

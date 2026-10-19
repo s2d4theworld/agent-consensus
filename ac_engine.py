@@ -21,6 +21,7 @@ from ac_config import (
     TS_FORMAT,
     coerce_max_rounds,
     is_opencode,
+    role_agents,
     transport_of,
 )
 from ac_errors import ServerUnreachable
@@ -72,12 +73,13 @@ def parse_verdict(out: str) -> bool:
     m = re.match(r"[^A-Z]*(YES|NO)\b", t) or re.search(r"\b(YES|NO)\b", t)
     return bool(m and m.group(1) == "YES")
 
+def _judge_prompt(topic: str, transcript: str) -> str:
+    return f"TOPIC: {topic}\n\nHere is the transcript:\n\n{transcript}"
+
 def check_consensus(cfg: Config, topic: str, transcript: str,
                     judge_key: str) -> tuple[bool, str]:
     judge_cfg = cfg["agents"][judge_key]
-    judge_msgs = [
-        {"role": "user", "content": f"TOPIC: {topic}\n\nHere is the transcript:\n\n{transcript}"}
-    ]
+    judge_msgs = [{"role": "user", "content": _judge_prompt(topic, transcript)}]
     out = chat_completion(judge_key, judge_cfg, JUDGE_SYSTEM, judge_msgs,
                           role=ROLE_JUDGE)
     return parse_verdict(out), out
@@ -93,7 +95,7 @@ def parse_max_rounds(cfg: Config) -> int:
 def check_servers(cfg: Config) -> Available:
     # sweep orphan sessions; fail fast if a stateful server is unreachable.
     # returns {base_url: set(agent names)} for the reachable opencode servers
-    bases = sorted({oc_base_url(a) for a in cfg["agents"].values()
+    bases = sorted({oc_base_url(a) for _, a in role_agents(cfg)
                     if is_opencode(a)})
     available: Available = {}
     for base in bases:
@@ -121,7 +123,7 @@ def check_stateless_endpoints(cfg: Config) -> None:
     # model call would otherwise burn ~2 minutes of connection retries.
     # other connection errors only warn (a proxy may still make it work)
     seen = set()
-    for a in cfg["agents"].values():
+    for _, a in role_agents(cfg):
         if is_opencode(a):
             continue
         url = a["api_url"]
@@ -142,7 +144,7 @@ def resolve_restricted_agents(cfg: Config, available: Available) -> EffectiveAge
     # per-role restricted (websearch) agent to use; None where unavailable
     agent_eff: EffectiveAgents = {}
     warned = set()
-    for key, a in cfg["agents"].items():
+    for key, a in role_agents(cfg):
         name = a.get("agent")
         if not name or not is_opencode(a):
             agent_eff[key] = None
@@ -236,6 +238,30 @@ def _print_turn(turn: Turn) -> None:
     print(turn.text)
     print()
 
+class Transcript:
+    # the run transcript: unique path, header write, append-only turn text
+    def __init__(self) -> None:
+        self.ts = time.strftime(TS_FORMAT)
+        self.path = self._reserve()
+
+    def _reserve(self) -> str:
+        # exclusive create: a second run started in the same second must not
+        # overwrite the earlier transcript
+        base = os.path.join(ac_config.TRANSCRIPT_DIR, f"discussion_{self.ts}")
+        path, n = base + ".txt", 2
+        while True:
+            try:
+                with open(path, "x", encoding="utf-8"):
+                    return path
+            except FileExistsError:
+                path, n = f"{base}_{n}.txt", n + 1
+
+    def write(self, text: str, mode: str = "a") -> None:
+        # single writer: encoding and the append-only rule (a turn is durable
+        # as soon as it completes) live in one place
+        with open(self.path, mode, encoding="utf-8") as tf:
+            tf.write(text)
+
 class Discussion:
     # one debate run: owns the turns, sessions, restricted-agent resolution
     # and the transcript file. run_discussion() wires the checks and prompts
@@ -256,8 +282,7 @@ class Discussion:
         self.sessions = OpencodeSessions(cfg)
         self.turns: Turns = []
         self.started_at = 0.0  # set by start()
-        self.ts = time.strftime(TS_FORMAT)
-        self.path = ""  # reserved by start()
+        self.transcript = Transcript()
         self.initial_msg = f"Discussion topic: {topic}\nStart the discussion now."
 
     def start(self) -> None:
@@ -271,8 +296,7 @@ class Discussion:
         print(f"  [Transport] {', '.join(transports)}\n")
         header = (f"TOPIC: {self.topic}\nSTART: {time.ctime()}\n"
                   f"JUDGE: {self.judge['name']} ({self.judge['model']})\n{'='*60}\n\n")
-        self.path = self._reserve_transcript()
-        self._write_transcript(header, mode="w")
+        self.transcript.write(header, mode="w")
 
     def full_view(self, agent_key: str) -> list[dict[str, str]]:
         # stateless transport view: own turns = assistant, opponent = user
@@ -284,12 +308,15 @@ class Discussion:
                 msgs.append({"role": "user", "content": f"[{turn.name}]: {turn.text}"})
         return msgs
 
+    def _session_title(self, role: str) -> str:
+        return f"{SESSION_TITLE_PREFIX}{role} {self.transcript.ts}"
+
     def _request_turn(self, key: str, sys_prompt: str) -> str:
         a = self.cfg["agents"][key]
         if not is_opencode(a):
             return chat_completion(key, a, sys_prompt, self.full_view(key))
         # stateful: send only the turns this session hasn't seen yet
-        st = self.sessions.ensure(key, f"{SESSION_TITLE_PREFIX}{key} {self.ts}")
+        st = self.sessions.ensure(key, self._session_title(key))
         parts = []
         if not st["started"]:
             parts.append(self.initial_msg)
@@ -317,11 +344,10 @@ class Discussion:
         if not is_opencode(self.cfg["agents"][self.judge_key]):
             return check_consensus(self.cfg, self.topic, format_transcript(self.turns),
                                    self.judge_key)
-        st = self.sessions.ensure(ROLE_JUDGE, f"{SESSION_TITLE_PREFIX}judge {self.ts}",
+        st = self.sessions.ensure(ROLE_JUDGE, self._session_title(ROLE_JUDGE),
                                   cfg_key=self.judge_key)
         if not st["started"]:
-            text = (f"TOPIC: {self.topic}\n\nHere is the transcript:\n\n"
-                    f"{format_transcript(self.turns)}")
+            text = _judge_prompt(self.topic, format_transcript(self.turns))
         else:
             text = "New exchange:\n\n" + format_transcript(self.turns[st["sent"]:])
         out = oc_send(self.judge, st["id"], JUDGE_SYSTEM, text,
@@ -341,7 +367,6 @@ class Discussion:
         judge_failed = False
         try:
             for rnd in range(1, self.max_rounds + 1):
-                rounds_done = rnd
                 self._start_round(rnd)
 
                 print(f"  [Round {rnd}] {self.proposer['name']} is thinking...", flush=True)
@@ -349,6 +374,7 @@ class Discussion:
 
                 print(f"  [Round {rnd}] {self.critic['name']} is evaluating...", flush=True)
                 self._debate_turn(ROLE_CRITIC, self.critic_sys)
+                rounds_done = rnd
 
                 result = self._judge_round(rnd)
                 judged = judged or result.attempted
@@ -412,46 +438,28 @@ class Discussion:
         print("=" * 60)
         print(f"  Final status : {status}")
         print(f"  Duration     : {elapsed:.0f} sec, {rounds_done} round{plural}")
-        print(f"  Transcript   : {self.path}")
+        print(f"  Transcript   : {self.transcript.path}")
         print("=" * 60)
         footer = (f"{'='*60}\nSTATUS: {status}\n"
                   f"JUDGE NOTE: {judge_note}\nDURATION: {elapsed:.0f}s\n")
         if aborted:
             footer += f"ABORTED: {aborted}\n"
-        self._write_transcript(footer)
-
-    def _reserve_transcript(self) -> str:
-        # exclusive create: a second run started in the same second must not
-        # overwrite the earlier transcript
-        base = os.path.join(ac_config.TRANSCRIPT_DIR, f"discussion_{self.ts}")
-        path, n = base + ".txt", 2
-        while True:
-            try:
-                with open(path, "x", encoding="utf-8"):
-                    return path
-            except FileExistsError:
-                path, n = f"{base}_{n}.txt", n + 1
-
-    def _write_transcript(self, text: str, mode: str = "a") -> None:
-        # single writer: encoding and the append-only rule (a turn is durable
-        # as soon as it completes) live in one place
-        with open(self.path, mode, encoding="utf-8") as tf:
-            tf.write(text)
+        self.transcript.write(footer)
 
     def _start_round(self, rnd: int) -> None:
-        self._write_transcript(f"--- Round {rnd} ---\n")
+        self.transcript.write(f"--- Round {rnd} ---\n")
 
     def _append_turn(self, turn: Turn) -> None:
-        self._write_transcript(f"[{turn.name}]\n{turn.text}\n\n")
+        self.transcript.write(f"[{turn.name}]\n{turn.text}\n\n")
 
 def run_discussion(cfg: Config, topic: str | None = None) -> None:
     os.makedirs(ac_config.TRANSCRIPT_DIR, exist_ok=True)
-    available = check_servers(cfg)
-    check_stateless_endpoints(cfg)
-
     extra_roles = sorted(k for k in cfg["agents"] if k not in ROLES)
     if extra_roles:
         print(f"  [Warn] ignoring unknown agent role(s): {', '.join(extra_roles)}")
+
+    available = check_servers(cfg)
+    check_stateless_endpoints(cfg)
 
     prompted = topic is None
     topic = topic or input_required("Discussion topic: ")
