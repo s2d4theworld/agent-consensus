@@ -12,6 +12,7 @@ import time
 import urllib.error
 import urllib.request
 from email.utils import parsedate_to_datetime
+from http.client import IncompleteRead
 from math import ceil
 from typing import Any
 
@@ -55,13 +56,13 @@ def _retry_kind(code: int) -> str | None:
         return "server"
     return None
 
-def _retry_after(headers: Any) -> int | None:
+def _retry_after(headers: Any, default: int | None = None) -> int | None:
     # a server-provided Retry-After (delta-seconds or HTTP-date) wins over the
-    # policy table, but is capped so a broken or hostile value cannot stall
-    # the CLI; None = no usable hint, use the policy table
+    # policy wait, but is capped so a broken or hostile value cannot stall
+    # the CLI; default (None = no policy wait either) is used without a hint
     raw = ((headers.get("Retry-After") if headers else None) or "").strip()
     if not raw:
-        return None
+        return default
     delay: float
     try:
         delay = int(raw)
@@ -69,7 +70,7 @@ def _retry_after(headers: Any) -> int | None:
         try:
             delay = parsedate_to_datetime(raw).timestamp() - time.time()
         except (TypeError, ValueError):
-            return None
+            return default
     return max(0, min(ceil(delay), RETRY_AFTER_MAX))
 
 def _read_json_response(resp: Any) -> Any:
@@ -89,34 +90,37 @@ def post_json(url: str, payload: dict[str, Any],
         method="POST",
     )
     attempts = max(len(waits) for waits in RETRY_POLICY.values()) + 1
-    last_err: str | None = None
+    last_err = "request failed"
     for attempt in range(attempts):
+        label = ""
+        wait: int | None = None
+        cause: BaseException | None = None
         try:
             with urllib.request.urlopen(req, timeout=timeout) as resp:
                 return _read_json_response(resp)
         except urllib.error.HTTPError as e:
             body = e.read().decode("utf-8", "replace")[:500]
             e.close()  # release the response socket; body is already read
-            last_err = f"HTTP {e.code}: {body}"
+            last_err, label, cause = f"HTTP {e.code}: {body}", str(e.code), e
             kind = _retry_kind(e.code)
-            wait = _retry_wait(kind, attempt) if kind else None
-            if wait is None:
-                raise TransportError(last_err) from e
-            server_wait = _retry_after(e.headers)
-            if server_wait is not None:
-                wait = server_wait
-            print(f"    [retry {attempt+1}] {e.code}, waiting {wait}s...", flush=True)
-            time.sleep(wait)
-        except (TimeoutError, ConnectionError, urllib.error.URLError, socket.timeout) as e:
-            last_err = f"connection: {e}"
+            if kind:
+                wait = _retry_after(e.headers, _retry_wait(kind, attempt))
+        except (TimeoutError, ConnectionError, urllib.error.URLError,
+                socket.timeout) as e:
+            last_err, label, cause = f"connection: {e}", "connection failed", e
             wait = _retry_wait("conn", attempt)
-            if wait is None:
-                raise TransportError(last_err) from e
-            print(f"    [retry {attempt+1}] connection failed, waiting {wait}s...", flush=True)
-            time.sleep(wait)
+        except (IncompleteRead, UnicodeError, json.JSONDecodeError) as e:
+            # a dropped or intercepted body (proxy error page) is as transient
+            # as a dropped connection; message sends dedupe on retry
+            last_err, label, cause = f"malformed response: {e}", "malformed response", e
+            wait = _retry_wait("conn", attempt)
         except Exception as e:
             raise TransportError(f"request failed: {e}") from e
-    raise TransportError(last_err or "request failed")
+        if wait is None:
+            raise TransportError(last_err) from cause
+        print(f"    [retry {attempt+1}] {label}, waiting {wait}s...", flush=True)
+        time.sleep(wait)
+    raise TransportError(last_err)
 
 def strip_control_tokens(text: str) -> str:
     # Strip leaked control tokens from model output (e.g. <|constrain|>, <|channel|>)

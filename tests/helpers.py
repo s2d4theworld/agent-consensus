@@ -82,6 +82,16 @@ class _FakeHandler(BaseHTTPRequestHandler):
         srv = self.srv
         n = int(self.headers.get("Content-Length", 0))
         payload = json.loads(self.rfile.read(n).decode("utf-8")) if n else {}
+        if srv.raw_response is not None:
+            body, short = srv.raw_response
+            srv.raw_response = None
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            # short > 0 declares more than is written: IncompleteRead
+            self.send_header("Content-Length", str(len(body) + short))
+            self.end_headers()
+            self.wfile.write(body)
+            return
         if srv.retry_codes:
             retry_headers = ({"Retry-After": srv.retry_after}
                              if srv.retry_after is not None else None)
@@ -169,6 +179,7 @@ class FakeServer:
         self.chats: list[dict] = []
         self.retry_codes: list[int] = []    # status codes to fail the next POSTs with
         self.retry_after: str | None = None  # Retry-After sent with those failures
+        self.raw_response: tuple[bytes, int] | None = None  # (body, length shortfall)
         self.message_error: dict | None = None  # set: /message returns this envelope
         self.reply_override: str | None = None  # set: all model replies use this text
         self._counter = 0

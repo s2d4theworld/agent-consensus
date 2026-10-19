@@ -151,7 +151,7 @@ def save_config(cfg: Config) -> bool:
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(cfg, f, indent=2, ensure_ascii=False)
         os.replace(tmp, CONFIG_PATH)
-    except OSError as e:
+    except (OSError, TypeError, ValueError) as e:
         print(f"  [config] cannot save {CONFIG_PATH}: {e}")
         try:
             os.remove(tmp)

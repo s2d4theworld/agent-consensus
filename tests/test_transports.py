@@ -8,38 +8,10 @@ from urllib.error import URLError
 import ac_config
 import ac_transports
 from ac_errors import TransportError
-from helpers import FakeServer, oc_cfg
+from helpers import FakeServer, closed_port, oc_cfg
 
 
-class TestTransports(unittest.TestCase):
-    def tearDown(self):
-        ac_transports._AGENT_LIST_CACHE.clear()
-
-    def test_agent_list_cache_ttl(self):
-        calls = {"n": 0}
-
-        def fake_list(_base_url, _timeout=ac_config.TIMEOUT_LIST):
-            calls["n"] += 1
-            return {"debater"}
-
-        orig = ac_transports.oc_agent_list
-        ac_transports.oc_agent_list = fake_list
-        try:
-            ac_transports._AGENT_LIST_CACHE.clear()
-            ac_transports.oc_agent_list_cached("http://x")
-            ac_transports.oc_agent_list_cached("http://x")
-            self.assertEqual(calls["n"], 1)
-            ac_transports._AGENT_LIST_CACHE["http://x"] = (time.time() - 60, None)
-            ac_transports.oc_agent_list_cached("http://x")
-            self.assertEqual(calls["n"], 2)
-        finally:
-            ac_transports.oc_agent_list = orig
-
-    def test_agent_list_unreachable_returns_none(self):
-        with mock.patch.object(ac_transports, "http_get_json",
-                               side_effect=URLError("refused")):
-            self.assertIsNone(ac_transports.oc_agent_list("http://127.0.0.1:1"))
-
+class TestPostJsonRetries(unittest.TestCase):
     def test_post_json_retries_transient_error(self):
         srv = FakeServer()
         self.addCleanup(srv.stop)
@@ -74,7 +46,9 @@ class TestTransports(unittest.TestCase):
             self.assertEqual(ac_transports._retry_after({"Retry-After": stamp}), 30)
         self.assertEqual(ac_transports._retry_after({"Retry-After": "999999"}),
                          ac_config.RETRY_AFTER_MAX)
-        self.assertIsNone(ac_transports._retry_after({"Retry-After": "soon"}))
+        # without a usable hint the caller's policy wait (default) survives
+        self.assertEqual(ac_transports._retry_after({"Retry-After": "soon"}, 45), 45)
+        self.assertEqual(ac_transports._retry_after({}, 45), 45)
         self.assertIsNone(ac_transports._retry_after({}))
         self.assertIsNone(ac_transports._retry_after(None))
 
@@ -86,6 +60,64 @@ class TestTransports(unittest.TestCase):
             with self.assertRaisesRegex(TransportError, "HTTP 400"):
                 ac_transports.post_json(srv.base + "/session", {}, timeout=5)
         fake_time.sleep.assert_not_called()
+
+    def test_post_json_retries_malformed_response(self):
+        # a proxy error page instead of JSON is as transient as a reset
+        srv = FakeServer()
+        self.addCleanup(srv.stop)
+        srv.raw_response = (b"<html>bad gateway</html>", 0)
+        with mock.patch.object(ac_transports, "time") as fake_time:
+            data = ac_transports.post_json(srv.base + "/session", {"title": "t"}, timeout=5)
+        self.assertTrue(data["id"].startswith("ses_"))
+        fake_time.sleep.assert_called_once_with(20)
+
+    def test_post_json_retries_truncated_response(self):
+        # declared Content-Length > body: IncompleteRead, then a clean retry
+        srv = FakeServer()
+        self.addCleanup(srv.stop)
+        srv.raw_response = (b'{"id": "ses_truncated1test2018"}', 7)
+        with mock.patch.object(ac_transports, "time") as fake_time:
+            data = ac_transports.post_json(srv.base + "/session", {"title": "t"}, timeout=5)
+        self.assertTrue(data["id"].startswith("ses_fake"))
+        fake_time.sleep.assert_called_once_with(20)
+
+    def test_post_json_retries_connection_failures(self):
+        url = f"http://127.0.0.1:{closed_port()}/session"
+        with mock.patch.object(ac_transports, "time") as fake_time:
+            with self.assertRaisesRegex(TransportError, "connection:"):
+                ac_transports.post_json(url, {}, timeout=0.5)
+        self.assertEqual([call.args[0] for call in fake_time.sleep.call_args_list],
+                         [20, 40, 60])
+
+
+class TestTransports(unittest.TestCase):
+    def tearDown(self):
+        ac_transports._AGENT_LIST_CACHE.clear()
+
+    def test_agent_list_cache_ttl(self):
+        calls = {"n": 0}
+
+        def fake_list(_base_url, _timeout=ac_config.TIMEOUT_LIST):
+            calls["n"] += 1
+            return {"debater"}
+
+        orig = ac_transports.oc_agent_list
+        ac_transports.oc_agent_list = fake_list
+        try:
+            ac_transports._AGENT_LIST_CACHE.clear()
+            ac_transports.oc_agent_list_cached("http://x")
+            ac_transports.oc_agent_list_cached("http://x")
+            self.assertEqual(calls["n"], 1)
+            ac_transports._AGENT_LIST_CACHE["http://x"] = (time.time() - 60, None)
+            ac_transports.oc_agent_list_cached("http://x")
+            self.assertEqual(calls["n"], 2)
+        finally:
+            ac_transports.oc_agent_list = orig
+
+    def test_agent_list_unreachable_returns_none(self):
+        with mock.patch.object(ac_transports, "http_get_json",
+                               side_effect=URLError("refused")):
+            self.assertIsNone(ac_transports.oc_agent_list("http://127.0.0.1:1"))
 
     def test_chat_completion_requires_api_key(self):
         agent: ac_config.AgentCfg = {

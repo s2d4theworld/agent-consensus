@@ -87,6 +87,10 @@ Notes from testing the serve API:
    round 2 until consensus / max rounds (`max_rounds` in config.json).
 3. Transcripts are saved to `transcripts/discussion_<timestamp>.txt`.
 
+`setup` and `install-agent` exit non-zero when they fail. `setup` still
+exits 0 when only the optional websearch-agent install fails: the config
+is saved and runs fall back to the no-tools prompt.
+
 ## openai transport (optional)
 
 Pick `openai` in the wizard to use any chat-completions endpoint

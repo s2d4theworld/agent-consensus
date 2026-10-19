@@ -126,6 +126,16 @@ class TestConfig(unittest.TestCase):
                 self.assertEqual(json.load(f), {"old": True})
             self.assertFalse(os.path.exists(path + ".tmp"))
 
+    def test_save_config_reports_non_serializable_config(self):
+        # the bool contract holds for any config, not just OSError paths
+        with tempfile.TemporaryDirectory() as tdir:
+            path = os.path.join(tdir, "config.json")
+            with mock.patch.object(ac_config, "CONFIG_PATH", path):
+                with contextlib.redirect_stdout(io.StringIO()) as out:
+                    self.assertFalse(save_config(cast(Any, {"agents": {1, 2}})))
+            self.assertIn("cannot save", out.getvalue())
+            self.assertFalse(os.path.exists(path))
+
     def test_temperature_validation(self):
         cases: list[tuple[Any, bool]] = [
             (0.0, True), (2.0, True), (0.7, True),
