@@ -56,6 +56,15 @@ def _retry_kind(code: int) -> str | None:
         return "server"
     return None
 
+def _http_retry_wait(code: int, headers: Any, attempt: int) -> int | None:
+    # None = not retryable or the policy is exhausted. A server Retry-After
+    # hint can shorten or extend a planned retry, never create one.
+    kind = _retry_kind(code)
+    wait = _retry_wait(kind, attempt) if kind else None
+    if wait is None:
+        return None
+    return _retry_after(headers, wait)
+
 def _retry_after(headers: Any, default: int | None = None) -> int | None:
     # a server-provided Retry-After (delta-seconds or HTTP-date) wins over the
     # policy wait, but is capped so a broken or hostile value cannot stall
@@ -102,9 +111,7 @@ def post_json(url: str, payload: dict[str, Any],
             body = e.read().decode("utf-8", "replace")[:500]
             e.close()  # release the response socket; body is already read
             last_err, label, cause = f"HTTP {e.code}: {body}", str(e.code), e
-            kind = _retry_kind(e.code)
-            if kind:
-                wait = _retry_after(e.headers, _retry_wait(kind, attempt))
+            wait = _http_retry_wait(e.code, e.headers, attempt)
         except (TimeoutError, ConnectionError, urllib.error.URLError,
                 socket.timeout) as e:
             last_err, label, cause = f"connection: {e}", "connection failed", e

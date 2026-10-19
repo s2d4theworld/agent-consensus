@@ -10,6 +10,7 @@ import socket
 import sys
 import tempfile
 import threading
+import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -193,6 +194,14 @@ class FakeServer:
     def stop(self):
         self.httpd.shutdown()
         self.httpd.server_close()
+
+
+class FakeServerMixin(unittest.TestCase):
+    # one line per test: a FakeServer whose shutdown joins the test cleanup
+    def fake_server(self) -> FakeServer:
+        srv = FakeServer()
+        self.addCleanup(srv.stop)
+        return srv
 
 
 def oc_cfg(url, agent="debater", with_judge=True, max_rounds=1):

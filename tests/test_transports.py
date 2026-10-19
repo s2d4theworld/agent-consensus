@@ -8,13 +8,12 @@ from urllib.error import URLError
 import ac_config
 import ac_transports
 from ac_errors import TransportError
-from helpers import FakeServer, closed_port, oc_cfg
+from helpers import FakeServerMixin, closed_port, oc_cfg
 
 
-class TestPostJsonRetries(unittest.TestCase):
+class TestPostJsonRetries(FakeServerMixin, unittest.TestCase):
     def test_post_json_retries_transient_error(self):
-        srv = FakeServer()
-        self.addCleanup(srv.stop)
+        srv = self.fake_server()
         srv.retry_codes.append(429)
         with mock.patch.object(ac_transports, "time") as fake_time:
             data = ac_transports.post_json(srv.base + "/session", {"title": "t"}, timeout=5)
@@ -22,8 +21,7 @@ class TestPostJsonRetries(unittest.TestCase):
         fake_time.sleep.assert_called_once_with(45)
 
     def test_post_json_retries_500_once_only(self):
-        srv = FakeServer()
-        self.addCleanup(srv.stop)
+        srv = self.fake_server()
         srv.retry_codes.extend([500, 500])
         with mock.patch.object(ac_transports, "time") as fake_time:
             with self.assertRaisesRegex(TransportError, "HTTP 500"):
@@ -31,13 +29,24 @@ class TestPostJsonRetries(unittest.TestCase):
         fake_time.sleep.assert_called_once_with(15)
 
     def test_post_json_honors_retry_after(self):
-        srv = FakeServer()
-        self.addCleanup(srv.stop)
+        srv = self.fake_server()
         srv.retry_codes.append(429)
         srv.retry_after = "7"
         with mock.patch.object(ac_transports, "time") as fake_time:
             ac_transports.post_json(srv.base + "/session", {"title": "t"}, timeout=5)
         fake_time.sleep.assert_called_once_with(7)
+
+    def test_post_json_retry_budget_is_not_extended_by_hints(self):
+        # once the policy is exhausted, a Retry-After hint must not add a
+        # sleep after the last allowed request has already failed
+        srv = self.fake_server()
+        srv.retry_codes.extend([429, 429, 429, 429])
+        srv.retry_after = "7"
+        with mock.patch.object(ac_transports, "time") as fake_time:
+            with self.assertRaisesRegex(TransportError, "HTTP 429"):
+                ac_transports.post_json(srv.base + "/session", {}, timeout=5)
+        self.assertEqual([call.args[0] for call in fake_time.sleep.call_args_list],
+                         [7, 7, 7])
 
     def test_retry_after_parsing_and_cap(self):
         stamp = time.strftime("%a, %d %b %Y %H:%M:%S GMT", time.gmtime(1_700_000_030))
@@ -53,8 +62,7 @@ class TestPostJsonRetries(unittest.TestCase):
         self.assertIsNone(ac_transports._retry_after(None))
 
     def test_post_json_does_not_retry_client_error(self):
-        srv = FakeServer()
-        self.addCleanup(srv.stop)
+        srv = self.fake_server()
         srv.retry_codes.append(400)
         with mock.patch.object(ac_transports, "time") as fake_time:
             with self.assertRaisesRegex(TransportError, "HTTP 400"):
@@ -63,8 +71,7 @@ class TestPostJsonRetries(unittest.TestCase):
 
     def test_post_json_retries_malformed_response(self):
         # a proxy error page instead of JSON is as transient as a reset
-        srv = FakeServer()
-        self.addCleanup(srv.stop)
+        srv = self.fake_server()
         srv.raw_response = (b"<html>bad gateway</html>", 0)
         with mock.patch.object(ac_transports, "time") as fake_time:
             data = ac_transports.post_json(srv.base + "/session", {"title": "t"}, timeout=5)
@@ -73,8 +80,7 @@ class TestPostJsonRetries(unittest.TestCase):
 
     def test_post_json_retries_truncated_response(self):
         # declared Content-Length > body: IncompleteRead, then a clean retry
-        srv = FakeServer()
-        self.addCleanup(srv.stop)
+        srv = self.fake_server()
         srv.raw_response = (b'{"id": "ses_truncated1test2018"}', 7)
         with mock.patch.object(ac_transports, "time") as fake_time:
             data = ac_transports.post_json(srv.base + "/session", {"title": "t"}, timeout=5)
@@ -90,7 +96,7 @@ class TestPostJsonRetries(unittest.TestCase):
                          [20, 40, 60])
 
 
-class TestTransports(unittest.TestCase):
+class TestTransports(FakeServerMixin, unittest.TestCase):
     def tearDown(self):
         ac_transports._AGENT_LIST_CACHE.clear()
 
@@ -127,8 +133,7 @@ class TestTransports(unittest.TestCase):
             ac_transports.chat_completion("nokeyrole", agent, "sys", [])
 
     def test_oc_sweep_ignores_malformed_and_foreign_sessions(self):
-        srv = FakeServer()
-        self.addCleanup(srv.stop)
+        srv = self.fake_server()
         srv.session_list[:] = [{"id": "ses_keep0001test2018", "title": "other"}]
         ac_transports.oc_sweep(srv.base)
         self.assertEqual(srv.deletes, [])
@@ -143,8 +148,7 @@ class TestTransports(unittest.TestCase):
         self.assertEqual(srv.deletes, [])
 
     def test_oc_sweep_prefers_last_activity(self):
-        srv = FakeServer()
-        self.addCleanup(srv.stop)
+        srv = self.fake_server()
         now_ms = int(time.time() * 1000)
         old_ts = time.strftime("%Y%m%d_%H%M%S", time.localtime(time.time() - 3600))
         srv.session_list[:] = [
@@ -163,8 +167,7 @@ class TestTransports(unittest.TestCase):
         # an older server reports no time.updated: the creation stamp never
         # refreshes, so a long-running live session (older than min_age) must
         # survive, while a genuinely stale one is still swept
-        srv = FakeServer()
-        self.addCleanup(srv.stop)
+        srv = self.fake_server()
         running_ts = time.strftime("%Y%m%d_%H%M%S",
                                    time.localtime(time.time() - 3600))
         stale_ts = time.strftime(
@@ -181,8 +184,7 @@ class TestTransports(unittest.TestCase):
         self.assertIn("/session/ses_stale0001test2018", srv.deletes)
 
     def test_oc_send_error_envelope(self):
-        srv = FakeServer()
-        self.addCleanup(srv.stop)
+        srv = self.fake_server()
         srv.message_error = {"name": "ProviderError", "data": {"message": "boom"}}
         agent = oc_cfg(srv.base)["agents"]["proposer"]
         with self.assertRaisesRegex(TransportError, "opencode: boom"):
@@ -190,8 +192,7 @@ class TestTransports(unittest.TestCase):
 
     def test_empty_model_reply_is_an_error(self):
         # empty output must fail loudly instead of becoming a silent blank turn
-        srv = FakeServer()
-        self.addCleanup(srv.stop)
+        srv = self.fake_server()
         srv.reply_override = ""
         agent = oc_cfg(srv.base)["agents"]["proposer"]
         with self.assertRaisesRegex(TransportError, "empty response"):
@@ -240,8 +241,7 @@ class TestTransports(unittest.TestCase):
     def test_oc_send_message_id_is_content_derived(self):
         # identical resend (lost-response retry) -> replayed by the server;
         # different content -> fresh id, even at an index that was used before
-        srv = FakeServer()
-        self.addCleanup(srv.stop)
+        srv = self.fake_server()
         agent = oc_cfg(srv.base)["agents"]["proposer"]
         sid = "ses_fake0001test2018"
         ac_transports.oc_send(agent, sid, "sys", "same text", turn_index=0)

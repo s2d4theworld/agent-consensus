@@ -11,7 +11,7 @@ from unittest import mock
 import ac_engine
 from ac_engine import build_prompts, parse_max_rounds, parse_verdict, run_discussion
 from ac_errors import ServerUnreachable, TransportError
-from helpers import FakeServer, QuietRunMixin, closed_port, oc_cfg, stateless_cfg
+from helpers import FakeServerMixin, QuietRunMixin, closed_port, oc_cfg, stateless_cfg
 
 
 class TestParseMaxRounds(unittest.TestCase):
@@ -58,11 +58,10 @@ class TestBuildPrompts(unittest.TestCase):
         self.assertIn("CRITIC", prompts[ac_engine.ROLE_CRITIC])
 
 
-class TestOpencodeEngine(QuietRunMixin, unittest.TestCase):
+class TestOpencodeEngine(FakeServerMixin, QuietRunMixin, unittest.TestCase):
     def setUp(self):
         super().setUp()
-        self.srv = FakeServer()
-        self.addCleanup(self.srv.stop)
+        self.srv = self.fake_server()
 
     def test_consensus_after_two_rounds_and_cleanup(self):
         self.srv.verdicts[:] = ["NO - not yet.", "YES - agreed."]
@@ -227,7 +226,7 @@ class TestOpencodeEngine(QuietRunMixin, unittest.TestCase):
         self.assertEqual(str(cm.exception).count("http://127.0.0.1:"), 2)
 
 
-class TestStatelessEngine(QuietRunMixin, unittest.TestCase):
+class TestStatelessEngine(FakeServerMixin, QuietRunMixin, unittest.TestCase):
     def test_refused_endpoint_fails_fast(self):
         cfg = stateless_cfg(f"http://127.0.0.1:{closed_port()}/v1/chat/completions")
         with self.assertRaises(ServerUnreachable) as cm:
@@ -245,8 +244,7 @@ class TestStatelessEngine(QuietRunMixin, unittest.TestCase):
         self.assertIn("request failed", str(cm.exception))
 
     def test_extra_stateless_role_is_not_probed(self):
-        srv = FakeServer()
-        self.addCleanup(srv.stop)
+        srv = self.fake_server()
         cfg = stateless_cfg(srv.base + "/v1/chat/completions")
         cfg["agents"]["backup"] = {
             "name": "B", "transport": "openai", "api_key": "k",
@@ -258,8 +256,7 @@ class TestStatelessEngine(QuietRunMixin, unittest.TestCase):
         self.assertIn("NO CONSENSUS", out)
 
     def test_temperature_defaults(self):
-        srv = FakeServer()
-        self.addCleanup(srv.stop)
+        srv = self.fake_server()
         cfg = stateless_cfg(srv.base + "/v1/chat/completions")
         cfg["max_rounds"] = 2
         out = self.run_engine(cfg)
@@ -270,8 +267,7 @@ class TestStatelessEngine(QuietRunMixin, unittest.TestCase):
     def test_judge_fallback_still_uses_judge_temperature(self):
         # without a judge role the judging call runs on the proposer's config,
         # but it is still a judging call: temperature 0.0, not 0.7
-        srv = FakeServer()
-        self.addCleanup(srv.stop)
+        srv = self.fake_server()
         cfg = stateless_cfg(srv.base + "/v1/chat/completions")
         cfg["max_rounds"] = 2
         del cfg["agents"]["judge"]

@@ -9,10 +9,10 @@ from unittest import mock
 import ac_config
 import ac_transports
 import ac_ui
-from helpers import FakeServer, QuietRunMixin, fake_stdin, oc_cfg
+from helpers import FakeServerMixin, QuietRunMixin, fake_stdin, oc_cfg
 
 
-class TestUi(QuietRunMixin, unittest.TestCase):
+class TestUi(FakeServerMixin, QuietRunMixin, unittest.TestCase):
     def test_setup_wizard_writes_config(self):
         cfg_path = os.path.join(self._tdir, "config.json")
         ac_config.CONFIG_PATH = cfg_path
@@ -58,8 +58,7 @@ class TestUi(QuietRunMixin, unittest.TestCase):
         self.assertIn("Judge: none configured - proposer will judge", buf.getvalue())
 
     def test_restricted_agent_lines_states(self):
-        srv = FakeServer()
-        self.addCleanup(srv.stop)
+        srv = self.fake_server()
         cfg = oc_cfg(srv.base)
         lines = ac_ui.restricted_agent_lines(cfg)
         self.assertEqual(lines, [f"  Restricted agent 'debater': active on {srv.base}"])
