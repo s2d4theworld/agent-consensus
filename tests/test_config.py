@@ -106,6 +106,18 @@ class TestConfig(unittest.TestCase):
         self.assertEqual(coerce_max_rounds(100000), MAX_ROUNDS_LIMIT)
         self.assertEqual(coerce_max_rounds("99"), 99)
 
+    def test_load_config_tolerates_utf8_bom(self):
+        # a Windows editor may save a hand-edited config.json with a BOM;
+        # it must not read as broken
+        with tempfile.TemporaryDirectory() as tdir:
+            path = os.path.join(tdir, "config.json")
+            with open(path, "w", encoding="utf-8-sig") as f:
+                json.dump(oc_cfg("http://x"), f)
+            with mock.patch.object(ac_config, "CONFIG_PATH", path):
+                cfg = ac_config.load_config()
+        self.assertIsNotNone(cfg)
+        self.assertIn("agents", cfg or {})
+
     def test_save_config_reports_unwritable_path(self):
         with mock.patch("builtins.open", side_effect=OSError("read-only")), \
                 captured_stdout() as out:

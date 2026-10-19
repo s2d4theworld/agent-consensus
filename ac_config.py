@@ -78,7 +78,9 @@ def load_config() -> Config | None:
     if not os.path.exists(CONFIG_PATH):
         return None
     try:
-        with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+        # utf-8-sig: a hand-edited config saved with a BOM by a Windows
+        # editor must not read as broken (BOM-less files decode identically)
+        with open(CONFIG_PATH, "r", encoding="utf-8-sig") as f:
             return json.load(f)
     except (OSError, ValueError) as e:  # ValueError: JSONDecodeError, bad encoding
         print(f"  [config] cannot read {CONFIG_PATH}: {e}")

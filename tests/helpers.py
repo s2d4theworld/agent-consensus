@@ -28,25 +28,30 @@ def closed_port():
 
 
 @contextlib.contextmanager
-def fake_stdin(text: str):
-    # swap sys.stdin for an in-memory stream; always restored
-    old = sys.stdin
-    sys.stdin = io.StringIO(text)
+def patched_attrs(module: object, **values: object):
+    # temporarily replace module attributes; always restored
+    saved = {name: getattr(module, name) for name in values}
+    for name, value in values.items():
+        setattr(module, name, value)
     try:
         yield
     finally:
-        sys.stdin = old
+        for name, value in saved.items():
+            setattr(module, name, value)
+
+
+@contextlib.contextmanager
+def fake_stdin(text: str):
+    # swap sys.stdin for an in-memory stream; always restored
+    with patched_attrs(sys, stdin=io.StringIO(text)):
+        yield
 
 
 @contextlib.contextmanager
 def fake_argv(*args: str):
     # run the CLI entry point against a fixed argv; always restored
-    old = sys.argv
-    sys.argv = ["agent_consensus.py", *args]
-    try:
+    with patched_attrs(sys, argv=["agent_consensus.py", *args]):
         yield
-    finally:
-        sys.argv = old
 
 
 @contextlib.contextmanager

@@ -26,7 +26,14 @@ GOLDEN_DIR = os.path.join(TOOLS_DIR, "golden")
 # the project imports below come after this path setup, not at the top of the
 # file; importing helpers also puts ROOT on sys.path
 sys.path.insert(0, os.path.join(ROOT, "tests"))
-from helpers import FakeServer, captured_stdout, fake_argv, fake_stdin, oc_cfg
+from helpers import (
+    FakeServer,
+    captured_stdout,
+    fake_argv,
+    fake_stdin,
+    oc_cfg,
+    patched_attrs,
+)
 
 import ac_config
 import ac_ui
@@ -128,24 +135,20 @@ def normalize(text, root):
 
 def run_scenario(name, fn):
     ctx = Ctx(tempfile.mkdtemp(prefix=f"golden_{name}_"))
-    saved = (ac_config.TRANSCRIPT_DIR, ac_config.CONFIG_PATH, ac_config.AGENT_SRC,
-             ac_config.OPENCODE_AGENTS_DIR)
-    ac_config.TRANSCRIPT_DIR = ctx.transcripts
-    ac_config.CONFIG_PATH = ctx.config_path
-    ac_config.AGENT_SRC = os.path.join(ROOT, ".opencode", "agents", "debater.md")
-    ac_config.OPENCODE_AGENTS_DIR = ctx.agents
     err = None
-    try:
-        with captured_stdout() as buf:
-            try:
-                fn(ctx)
-            except SystemExit:
-                pass
-            except Exception as e:
-                err = f"{type(e).__name__}: {e}"
-    finally:
-        (ac_config.TRANSCRIPT_DIR, ac_config.CONFIG_PATH, ac_config.AGENT_SRC,
-         ac_config.OPENCODE_AGENTS_DIR) = saved
+    with patched_attrs(ac_config,
+                       TRANSCRIPT_DIR=ctx.transcripts,
+                       CONFIG_PATH=ctx.config_path,
+                       AGENT_SRC=os.path.join(ROOT, ".opencode", "agents",
+                                              "debater.md"),
+                       OPENCODE_AGENTS_DIR=ctx.agents), \
+            captured_stdout() as buf:
+        try:
+            fn(ctx)
+        except SystemExit:
+            pass
+        except Exception as e:
+            err = f"{type(e).__name__}: {e}"
     try:
         tfiles = sorted(glob.glob(os.path.join(ctx.transcripts, "*.txt")))
         transcript = ""

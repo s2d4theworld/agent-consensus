@@ -235,6 +235,11 @@ class TestOpencodeEngine(FakeServerMixin, QuietRunMixin, unittest.TestCase):
 
 
 class TestStatelessEngine(FakeServerMixin, QuietRunMixin, unittest.TestCase):
+    def setUp(self):
+        super().setUp()
+        self.srv = self.fake_server()
+        self.cfg = stateless_cfg(self.srv.base + "/v1/chat/completions")
+
     def test_refused_endpoint_fails_fast(self):
         cfg = stateless_cfg(f"http://127.0.0.1:{closed_port()}/v1/chat/completions")
         with self.assertRaises(ServerUnreachable) as cm:
@@ -251,36 +256,30 @@ class TestStatelessEngine(FakeServerMixin, QuietRunMixin, unittest.TestCase):
         self.assertIn("request failed", str(cm.exception))
 
     def test_extra_stateless_role_is_not_probed(self):
-        srv = self.fake_server()
-        cfg = stateless_cfg(srv.base + "/v1/chat/completions")
-        cfg["agents"]["backup"] = {
+        self.cfg["agents"]["backup"] = {
             "name": "B", "transport": "openai", "api_key": "k",
             "api_url": f"http://127.0.0.1:{closed_port()}/v1/chat/completions",
             "model": "m",
         }
-        out = self.run_engine(cfg)
+        out = self.run_engine(self.cfg)
         self.assertIn("ignoring unknown agent role(s): backup", out)
         self.assertIn("NO CONSENSUS", out)
 
     def test_temperature_defaults(self):
-        srv = self.fake_server()
-        cfg = stateless_cfg(srv.base + "/v1/chat/completions")
-        cfg["max_rounds"] = 2
-        out = self.run_engine(cfg)
+        self.cfg["max_rounds"] = 2
+        out = self.run_engine(self.cfg)
         self.assertIn("Final status : CONSENSUS", out)
-        self.assertEqual([p["temperature"] for p in srv.chats],
+        self.assertEqual([p["temperature"] for p in self.srv.chats],
                          [0.7, 0.7, 0.7, 0.7, 0.0])
 
     def test_judge_fallback_still_uses_judge_temperature(self):
         # without a judge role the judging call runs on the proposer's config,
         # but it is still a judging call: temperature 0.0, not 0.7
-        srv = self.fake_server()
-        cfg = stateless_cfg(srv.base + "/v1/chat/completions")
-        cfg["max_rounds"] = 2
-        del cfg["agents"]["judge"]
-        out = self.run_engine(cfg)
+        self.cfg["max_rounds"] = 2
+        del self.cfg["agents"]["judge"]
+        out = self.run_engine(self.cfg)
         self.assertIn("Final status : CONSENSUS", out)
-        self.assertEqual([p["temperature"] for p in srv.chats],
+        self.assertEqual([p["temperature"] for p in self.srv.chats],
                          [0.7, 0.7, 0.7, 0.7, 0.0])
 
 
