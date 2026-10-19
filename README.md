@@ -84,7 +84,8 @@ Notes from testing the serve API:
 1. `python agent_consensus.py setup`
 2. `python agent_consensus.py` — pick `[2] Start discussion` and type a
    topic; proposer and critic take turns debating; the judge scores from
-   round 2 until consensus / max rounds (`max_rounds` in config.json).
+   round 2 until consensus / max rounds (`max_rounds` in config.json,
+   capped at 100).
 3. Transcripts are saved to `transcripts/discussion_<timestamp>.txt`.
 
 `setup` and `install-agent` exit non-zero when they fail. `setup` still

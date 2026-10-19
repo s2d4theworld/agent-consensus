@@ -14,6 +14,7 @@ from ac_config import (
     DEFAULT_MAX_ROUNDS,
     DEFAULT_TEMPERATURE_DEBATER,
     DEFAULT_TEMPERATURE_JUDGE,
+    MAX_ROUNDS_LIMIT,
     ROLE_CRITIC,
     ROLE_JUDGE,
     ROLE_PROPOSER,
@@ -104,6 +105,8 @@ class TestConfig(unittest.TestCase):
         self.assertEqual(coerce_max_rounds(False), DEFAULT_MAX_ROUNDS)
         self.assertEqual(coerce_max_rounds(0), 1)
         self.assertEqual(coerce_max_rounds(3.9), 3)
+        self.assertEqual(coerce_max_rounds(100000), MAX_ROUNDS_LIMIT)
+        self.assertEqual(coerce_max_rounds("99"), 99)
 
     def test_save_config_reports_unwritable_path(self):
         with mock.patch("builtins.open", side_effect=OSError("read-only")):

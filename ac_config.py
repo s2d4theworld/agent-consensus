@@ -34,6 +34,7 @@ TRANSPORT_OPENAI = "openai"
 ROLES = ("proposer", "critic", "judge")
 ROLE_PROPOSER, ROLE_CRITIC, ROLE_JUDGE = ROLES
 DEFAULT_MAX_ROUNDS = 10
+MAX_ROUNDS_LIMIT = 100  # sanity cap: a typo must not commit to a multi-day run
 # debaters get some variety, the judge stays deterministic; one source for
 # the wizard suggestions and the transport fallbacks
 TEMPERATURE_MIN, TEMPERATURE_MAX = 0.0, 2.0
@@ -163,11 +164,11 @@ def save_config(cfg: Config) -> bool:
 
 def coerce_max_rounds(value: Any) -> int:
     # one rule for config files and wizard input: malformed values fall back
-    # to the default, a valid value is never below 1 round
+    # to the default; a valid value is clamped to [1, MAX_ROUNDS_LIMIT]
     if isinstance(value, bool):
         return DEFAULT_MAX_ROUNDS  # bool is an int in Python, never a round count
     try:
-        return max(1, int(value))
+        return max(1, min(int(value), MAX_ROUNDS_LIMIT))
     except (TypeError, ValueError, OverflowError):
         return DEFAULT_MAX_ROUNDS
 

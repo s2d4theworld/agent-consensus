@@ -4,6 +4,7 @@ from ac_config import (
     Config,
     DEFAULT_MAX_ROUNDS,
     INSTALL_HINT,
+    MAX_ROUNDS_LIMIT,
     ROLES,
     ROLE_CRITIC,
     ROLE_JUDGE,
@@ -139,7 +140,8 @@ def setup_wizard() -> bool:
     print()
     cfg: Config = {"agents": {key: _prompt_agent(key, transport) for key in ROLES}}
     cfg["max_rounds"] = coerce_max_rounds(
-        input_optional("    Max discussion rounds", str(DEFAULT_MAX_ROUNDS)))
+        input_optional(f"    Max discussion rounds (1-{MAX_ROUNDS_LIMIT})",
+                       str(DEFAULT_MAX_ROUNDS)))
     if not save_config(cfg):
         return False
     if transport == TRANSPORT_OPENCODE:

@@ -18,7 +18,7 @@
     Display name    Server URL    Restricted agent ('-' = none; 'debater' = websearch only)    Model
   --- Agent: Judge (neutral — score consensus from round 2) ---
     Display name    Server URL    Restricted agent ('-' = none; 'debater' = websearch only)    Model
-    Max discussion rounds  Config saved: <TMP>/config.json
+    Max discussion rounds (1-100)  Config saved: <TMP>/config.json
   Websearch agent installed: <TMP>/agents/debater.md
   (restart opencode serve to load it)
 CONFIG: {"agents": {"critic": {"agent": "debater", "api_url": "http://127.0.0.1:4096", "model": "opencode/beam-free", "name": "Critic", "transport": "opencode"}, "judge": {"agent": "debater", "api_url": "http://127.0.0.1:4096", "model": "opencode/deepseek-v4.1-flash-free", "name": "Judge", "transport": "opencode"}, "proposer": {"agent": "debater", "api_url": "http://127.0.0.1:4096", "model": "opencode/longcat-2.5-preview-free", "name": "Proposer", "transport": "opencode"}}, "max_rounds": 3}

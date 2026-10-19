@@ -1,5 +1,7 @@
 # Tests for ac_transports: HTTP retry policy, agent-list cache, sweep guards
 # and the transport error envelopes.
+import contextlib
+import io
 import time
 import unittest
 from unittest import mock
@@ -12,6 +14,10 @@ from helpers import FakeServerMixin, closed_port, oc_cfg
 
 
 class TestPostJsonRetries(FakeServerMixin, unittest.TestCase):
+    def setUp(self):
+        # post_json prints retry notices; keep them out of the unittest output
+        self.enterContext(contextlib.redirect_stdout(io.StringIO()))
+
     def test_post_json_retries_transient_error(self):
         srv = self.fake_server()
         srv.retry_codes.append(429)
@@ -107,9 +113,7 @@ class TestTransports(FakeServerMixin, unittest.TestCase):
             calls["n"] += 1
             return {"debater"}
 
-        orig = ac_transports.oc_agent_list
-        ac_transports.oc_agent_list = fake_list
-        try:
+        with mock.patch.object(ac_transports, "oc_agent_list", fake_list):
             ac_transports._AGENT_LIST_CACHE.clear()
             ac_transports.oc_agent_list_cached("http://x")
             ac_transports.oc_agent_list_cached("http://x")
@@ -117,8 +121,6 @@ class TestTransports(FakeServerMixin, unittest.TestCase):
             ac_transports._AGENT_LIST_CACHE["http://x"] = (time.time() - 60, None)
             ac_transports.oc_agent_list_cached("http://x")
             self.assertEqual(calls["n"], 2)
-        finally:
-            ac_transports.oc_agent_list = orig
 
     def test_agent_list_unreachable_returns_none(self):
         with mock.patch.object(ac_transports, "http_get_json",

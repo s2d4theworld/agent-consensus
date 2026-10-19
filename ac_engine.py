@@ -53,6 +53,31 @@ class JudgeRound(NamedTuple):
     attempted: bool = False
     failed: bool = False
 
+class RunSummary:
+    # outcome of the round loop; run() reports it whether the loop finished
+    # or an exception interrupted it mid-round
+    def __init__(self) -> None:
+        self.consensus = False
+        self.rounds_done = 0
+        self.judge_note = ""
+        self.judged = False
+        self.judge_failed = False
+
+    def add_round(self, rnd: int, result: JudgeRound) -> bool:
+        # record one judged round; True = consensus reached, stop the loop
+        self.rounds_done = rnd
+        self.judged = self.judged or result.attempted
+        self.judge_failed = self.judge_failed or result.failed
+        if result.note is not None:
+            self.judge_note = result.note
+        self.consensus = self.consensus or result.consensus
+        return self.consensus
+
+    @property
+    def no_verdict(self) -> bool:
+        # the judge never answered once: not a genuine no-consensus verdict
+        return self.judge_failed and not self.judged
+
 Turns = list[Turn]
 Available = dict[str, set[str] | None]       # base_url -> agent names (None = unreachable)
 EffectiveAgents = dict[str, str | None]      # role -> restricted agent actually in use
@@ -369,11 +394,7 @@ class Discussion:
         # the whole run: round loop + exactly one summary/footer, whether it
         # ends normally or aborts mid-round (completed turns are already in the
         # transcript by then). Sessions are always closed on the way out.
-        consensus = False
-        rounds_done = 0
-        judge_note = ""
-        judged = False
-        judge_failed = False
+        summary = RunSummary()
         try:
             for rnd in range(1, self.max_rounds + 1):
                 self._start_round(rnd)
@@ -383,26 +404,19 @@ class Discussion:
 
                 print(f"  [Round {rnd}] {self.critic['name']} is evaluating...", flush=True)
                 self._debate_turn(ROLE_CRITIC)
-                rounds_done = rnd
 
-                result = self._judge_round(rnd)
-                judged = judged or result.attempted
-                judge_failed = judge_failed or result.failed
-                if result.note is not None:
-                    judge_note = result.note
-                if result.consensus:
-                    consensus = True
+                if summary.add_round(rnd, self._judge_round(rnd)):
                     break
         except BaseException as e:
             try:
-                self.finish(False, rounds_done, judge_note,
+                self.finish(False, summary.rounds_done, summary.judge_note,
                             aborted=f"{type(e).__name__}: {e}")
             except Exception:
                 pass  # never mask the original failure
             raise
         else:
-            self.finish(consensus, rounds_done, judge_note,
-                        no_verdict=judge_failed and not judged)
+            self.finish(summary.consensus, summary.rounds_done, summary.judge_note,
+                        no_verdict=summary.no_verdict)
         finally:
             self.sessions.close_all()
 
