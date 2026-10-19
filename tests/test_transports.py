@@ -1,7 +1,5 @@
 # Tests for ac_transports: HTTP retry policy, agent-list cache, sweep guards
 # and the transport error envelopes.
-import contextlib
-import io
 import time
 import unittest
 from unittest import mock
@@ -10,13 +8,13 @@ from urllib.error import URLError
 import ac_config
 import ac_transports
 from ac_errors import TransportError
-from helpers import FakeServerMixin, closed_port, oc_cfg
+from helpers import FakeServerMixin, captured_stdout, closed_port, oc_cfg
 
 
 class TestPostJsonRetries(FakeServerMixin, unittest.TestCase):
     def setUp(self):
         # post_json prints retry notices; keep them out of the unittest output
-        self.enterContext(contextlib.redirect_stdout(io.StringIO()))
+        self.enterContext(captured_stdout())
 
     def test_post_json_retries_transient_error(self):
         srv = self.fake_server()
@@ -220,6 +218,18 @@ class TestTransports(FakeServerMixin, unittest.TestCase):
                 with self.assertRaisesRegex(TransportError, "unexpected response"):
                     ac_transports.chat_completion("proposer", agent, "sys", [])
 
+    def test_chat_completion_uses_reasoning_content(self):
+        # empty content with reasoning_content set: thinking models put the
+        # answer in the reasoning field, which must not read as empty
+        agent: ac_config.AgentCfg = {
+            "name": "X", "transport": "openai", "api_key": "k", "model": "m",
+            "api_url": "http://x/v1/chat/completions"}
+        payload = {"choices": [{"message": {"content": "",
+                                            "reasoning_content": "thought it through"}}]}
+        with mock.patch.object(ac_transports, "post_json", return_value=payload):
+            out = ac_transports.chat_completion("proposer", agent, "sys", [])
+        self.assertEqual(out, "thought it through")
+
     def test_oc_session_create_rejects_malformed_response(self):
         agent = oc_cfg("http://x")["agents"]["proposer"]
         payloads: list[object] = [[], {}, {"id": 5}, {"id": ""}]
@@ -239,6 +249,14 @@ class TestTransports(FakeServerMixin, unittest.TestCase):
             with mock.patch.object(ac_transports, "post_json", return_value=payload):
                 with self.assertRaisesRegex(TransportError, "unexpected response"):
                     ac_transports.oc_send(agent, "ses_fake0001test2018", "sys", "text")
+
+    def test_oc_send_falls_back_to_reasoning_parts(self):
+        # no text part at all, only a reasoning part: that is the answer
+        agent = oc_cfg("http://x")["agents"]["proposer"]
+        payload = {"parts": [{"type": "reasoning", "text": "thinking..."}]}
+        with mock.patch.object(ac_transports, "post_json", return_value=payload):
+            out = ac_transports.oc_send(agent, "ses_fake0001test2018", "sys", "text")
+        self.assertEqual(out, "thinking...")
 
     def test_oc_send_message_id_is_content_derived(self):
         # identical resend (lost-response retry) -> replayed by the server;

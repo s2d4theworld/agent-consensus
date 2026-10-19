@@ -10,9 +10,7 @@
 #
 # Normalized away: temp paths, timestamps, durations, ephemeral fake-server
 # ports. Everything else must match byte for byte.
-import contextlib
 import glob
-import io
 import json
 import os
 import re
@@ -28,7 +26,7 @@ GOLDEN_DIR = os.path.join(TOOLS_DIR, "golden")
 # the project imports below come after this path setup, not at the top of the
 # file; importing helpers also puts ROOT on sys.path
 sys.path.insert(0, os.path.join(ROOT, "tests"))
-from helpers import FakeServer, oc_cfg
+from helpers import FakeServer, captured_stdout, fake_argv, fake_stdin, oc_cfg
 
 import ac_config
 import ac_ui
@@ -94,25 +92,16 @@ def s5_no_judge(ctx):
 def s6_menu(ctx):
     with open(ctx.config_path, "w", encoding="utf-8") as f:
         json.dump(oc_cfg(ctx.srv.base), f)
-    old_stdin, old_argv = sys.stdin, sys.argv
-    sys.stdin = io.StringIO("3\n")
-    sys.argv = ["agent_consensus.py"]
-    try:
+    with fake_stdin("3\n"), fake_argv():
         agent_consensus.main()
-    finally:
-        sys.stdin, sys.argv = old_stdin, old_argv
 
 
 @scenario
 def s7_wizard_opencode(ctx):
-    old_stdin = sys.stdin
     # 12 blank answers (4 prompts x 3 roles) + transport + the trailing "3"
     # which is the max_rounds answer, not a menu quit
-    sys.stdin = io.StringIO("opencode\n" + "\n" * 12 + "3\n")
-    try:
+    with fake_stdin("opencode\n" + "\n" * 12 + "3\n"):
         ac_ui.setup_wizard()
-    finally:
-        sys.stdin = old_stdin
     with open(ctx.config_path, "r", encoding="utf-8") as f:
         print("CONFIG:", json.dumps(json.load(f), sort_keys=True))
 
@@ -145,10 +134,9 @@ def run_scenario(name, fn):
     ac_config.CONFIG_PATH = ctx.config_path
     ac_config.AGENT_SRC = os.path.join(ROOT, ".opencode", "agents", "debater.md")
     ac_config.OPENCODE_AGENTS_DIR = ctx.agents
-    buf = io.StringIO()
     err = None
     try:
-        with contextlib.redirect_stdout(buf):
+        with captured_stdout() as buf:
             try:
                 fn(ctx)
             except SystemExit:

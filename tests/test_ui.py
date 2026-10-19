@@ -15,13 +15,16 @@ from helpers import (
     oc_cfg,
 )
 
+# wizard answers: transport + 5 prompts x 3 roles left blank (defaults),
+# then the max_rounds answer "3"
+OPENAI_WIZARD_STDIN = "openai\n" + "\n" * 5 * 3 + "3\n"
+
 
 class TestUi(FakeServerMixin, QuietRunMixin, unittest.TestCase):
     def test_setup_wizard_writes_config(self):
         cfg_path = os.path.join(self._tdir, "config.json")
         ac_config.CONFIG_PATH = cfg_path
-        stdin = "openai\n" + "\n" * 5 * 3 + "3\n"
-        with fake_stdin(stdin), captured_stdout():
+        with fake_stdin(OPENAI_WIZARD_STDIN), captured_stdout():
             self.assertTrue(ac_ui.setup_wizard())
         with open(cfg_path, "r", encoding="utf-8") as f:
             cfg = json.load(f)
@@ -32,8 +35,7 @@ class TestUi(FakeServerMixin, QuietRunMixin, unittest.TestCase):
     def test_setup_wizard_reports_save_failure(self):
         # unwritable target (missing directory): wizard must return False
         ac_config.CONFIG_PATH = os.path.join(self._tdir, "no", "config.json")
-        with fake_stdin("openai\n" + "\n" * 5 * 3 + "3\n"), \
-                captured_stdout() as out:
+        with fake_stdin(OPENAI_WIZARD_STDIN), captured_stdout() as out:
             self.assertFalse(ac_ui.setup_wizard())
         self.assertIn("cannot save", out.getvalue())
 
