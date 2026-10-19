@@ -75,16 +75,18 @@ def build_parser() -> argparse.ArgumentParser:
 
 def menu() -> None:
     while True:
-        banner()
-        cfg = load_config()
-        err = validate_config(cfg) if cfg else None
-        print_status(cfg, err)
-        print()
-        print("  [1] Setup / change configuration")
-        print("  [2] Start discussion")
-        print("  [3] Quit")
-        print()
+        # the whole prelude is guarded: print_status does a live agent-list
+        # lookup (TIMEOUT_MENU), and a Ctrl+C there must exit like everywhere else
         try:
+            banner()
+            cfg = load_config()
+            err = validate_config(cfg) if cfg else None
+            print_status(cfg, err)
+            print()
+            print("  [1] Setup / change configuration")
+            print("  [2] Start discussion")
+            print("  [3] Quit")
+            print()
             choice = input("  Choose (1-3): ").strip()
         except (EOFError, KeyboardInterrupt):
             print()

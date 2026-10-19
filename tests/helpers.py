@@ -55,6 +55,13 @@ def fake_argv(*args: str):
 
 
 @contextlib.contextmanager
+def fake_cli(answers: str, *args: str):
+    # drive the CLI entry point: fixed argv and stdin, stdout captured
+    with fake_stdin(answers), fake_argv(*args), captured_stdout() as out:
+        yield out
+
+
+@contextlib.contextmanager
 def captured_stdout():
     # redirect stdout into a buffer and yield it for assertions
     buf = io.StringIO()
