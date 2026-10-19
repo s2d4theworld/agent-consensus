@@ -44,6 +44,8 @@ RETRY_POLICY: dict[str, tuple[int, ...]] = {
     "server": RETRY_500_WAITS,  # 500: often deterministic, retry briefly
     "conn": RETRY_CONN_WAITS,
 }
+# total tries per request: the longest policy plus the initial attempt
+RETRY_ATTEMPTS = max(len(waits) for waits in RETRY_POLICY.values()) + 1
 
 def _retry_wait(kind: str, attempt: int) -> int | None:
     waits = RETRY_POLICY[kind]
@@ -98,9 +100,8 @@ def post_json(url: str, payload: dict[str, Any],
         headers={"Content-Type": "application/json", **(headers or {})},
         method="POST",
     )
-    attempts = max(len(waits) for waits in RETRY_POLICY.values()) + 1
     last_err = "request failed"
-    for attempt in range(attempts):
+    for attempt in range(RETRY_ATTEMPTS):
         label = ""
         wait: int | None = None
         cause: BaseException | None = None
@@ -127,6 +128,8 @@ def post_json(url: str, payload: dict[str, Any],
             raise TransportError(last_err) from cause
         print(f"    [retry {attempt+1}] {label}, waiting {wait}s...", flush=True)
         time.sleep(wait)
+    # safety net: on the last try every policy is exhausted, so wait is None
+    # and the loop raises from inside; this line only guards future policy edits
     raise TransportError(last_err)
 
 def strip_control_tokens(text: str) -> str:
