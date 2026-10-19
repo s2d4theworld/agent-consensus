@@ -11,6 +11,13 @@ from ac_errors import TransportError
 from helpers import FakeServerMixin, captured_stdout, closed_port, oc_cfg
 
 
+def stateless_agent(url: str = "http://127.0.0.1:1/v1/chat/completions",
+                    ) -> ac_config.AgentCfg:
+    # a minimal stateless agent; tests override what they exercise
+    return {"name": "X", "transport": "openai", "api_key": "k", "model": "m",
+            "api_url": url}
+
+
 class TestPostJsonRetries(FakeServerMixin, unittest.TestCase):
     def setUp(self):
         # post_json prints retry notices; keep them out of the unittest output
@@ -126,9 +133,8 @@ class TestTransports(FakeServerMixin, unittest.TestCase):
             self.assertIsNone(ac_transports.oc_agent_list("http://127.0.0.1:1"))
 
     def test_chat_completion_requires_api_key(self):
-        agent: ac_config.AgentCfg = {
-            "name": "X", "transport": "openai", "model": "m",
-            "api_url": "http://127.0.0.1:1/v1/chat/completions"}
+        agent = stateless_agent()
+        del agent["api_key"]
         with self.assertRaisesRegex(TransportError, "API key for agent 'nokeyrole'"):
             ac_transports.chat_completion("nokeyrole", agent, "sys", [])
 
@@ -197,16 +203,12 @@ class TestTransports(FakeServerMixin, unittest.TestCase):
         agent = oc_cfg(srv.base)["agents"]["proposer"]
         with self.assertRaisesRegex(TransportError, "empty response"):
             ac_transports.oc_send(agent, "ses_fake0001test2018", "sys", "text", turn_index=0)
-        chat_agent: ac_config.AgentCfg = {
-            "name": "X", "transport": "openai", "api_key": "k", "model": "m",
-            "api_url": srv.base + "/v1/chat/completions"}
+        chat_agent = stateless_agent(srv.base + "/v1/chat/completions")
         with self.assertRaisesRegex(TransportError, "empty response"):
             ac_transports.chat_completion("proposer", chat_agent, "sys", [])
 
     def test_chat_completion_rejects_malformed_response(self):
-        agent: ac_config.AgentCfg = {
-            "name": "X", "transport": "openai", "api_key": "k", "model": "m",
-            "api_url": "http://127.0.0.1:1/v1/chat/completions"}
+        agent = stateless_agent()
         payloads: list[object] = [
             [], {},
             {"choices": []},
@@ -221,9 +223,7 @@ class TestTransports(FakeServerMixin, unittest.TestCase):
     def test_chat_completion_uses_reasoning_content(self):
         # empty content with reasoning_content set: thinking models put the
         # answer in the reasoning field, which must not read as empty
-        agent: ac_config.AgentCfg = {
-            "name": "X", "transport": "openai", "api_key": "k", "model": "m",
-            "api_url": "http://x/v1/chat/completions"}
+        agent = stateless_agent("http://x/v1/chat/completions")
         payload = {"choices": [{"message": {"content": "",
                                             "reasoning_content": "thought it through"}}]}
         with mock.patch.object(ac_transports, "post_json", return_value=payload):

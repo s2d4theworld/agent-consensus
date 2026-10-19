@@ -1,6 +1,5 @@
 # Tests for ac_ui: setup wizard, prompts and menu status lines.
 import json
-import os
 import unittest
 from unittest import mock
 
@@ -22,8 +21,7 @@ OPENAI_WIZARD_STDIN = "openai\n" + "\n" * 5 * 3 + "3\n"
 
 class TestUi(FakeServerMixin, QuietRunMixin, unittest.TestCase):
     def test_setup_wizard_writes_config(self):
-        cfg_path = os.path.join(self._tdir, "config.json")
-        ac_config.CONFIG_PATH = cfg_path
+        cfg_path = self.temp_config()
         with fake_stdin(OPENAI_WIZARD_STDIN), captured_stdout():
             self.assertTrue(ac_ui.setup_wizard())
         with open(cfg_path, "r", encoding="utf-8") as f:
@@ -34,7 +32,7 @@ class TestUi(FakeServerMixin, QuietRunMixin, unittest.TestCase):
 
     def test_setup_wizard_reports_save_failure(self):
         # unwritable target (missing directory): wizard must return False
-        ac_config.CONFIG_PATH = os.path.join(self._tdir, "no", "config.json")
+        self.temp_config("no/config.json")
         with fake_stdin(OPENAI_WIZARD_STDIN), captured_stdout() as out:
             self.assertFalse(ac_ui.setup_wizard())
         self.assertIn("cannot save", out.getvalue())

@@ -251,6 +251,12 @@ class QuietRunMixin(unittest.TestCase):
             ac_config, TRANSCRIPT_DIR=self._tdir,
             CONFIG_PATH=ac_config.CONFIG_PATH))
 
+    def temp_config(self, name: str = "config.json") -> str:
+        # point CONFIG_PATH at a fresh file under the test's temp dir;
+        # setUp's cleanup restores the original afterwards
+        ac_config.CONFIG_PATH = os.path.join(self._tdir, name)
+        return ac_config.CONFIG_PATH
+
     def run_engine(self, cfg):
         with captured_stdout() as out:
             run_discussion(cfg, topic="test topic")

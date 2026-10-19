@@ -1,10 +1,8 @@
 # Tests for the CLI entry point: argument dispatch and menu behavior.
 import json
-import os
 import unittest
 from unittest import mock
 
-import ac_config
 import agent_consensus
 from helpers import (
     FakeServerMixin,
@@ -18,7 +16,7 @@ from helpers import (
 
 class TestEntry(FakeServerMixin, QuietRunMixin, unittest.TestCase):
     def test_menu_quits_on_3(self):
-        ac_config.CONFIG_PATH = os.path.join(self._tdir, "missing.json")
+        self.temp_config("missing.json")
         with fake_stdin("3\n"), fake_argv(), captured_stdout() as out:
             agent_consensus.main()
         self.assertIn("No config yet", out.getvalue())
@@ -38,8 +36,7 @@ class TestEntry(FakeServerMixin, QuietRunMixin, unittest.TestCase):
         # the primary menu action: choice 2 debates with the saved config,
         # waits for Enter, and returns to the menu
         srv = self.fake_server()
-        ac_config.CONFIG_PATH = os.path.join(self._tdir, "config.json")
-        with open(ac_config.CONFIG_PATH, "w", encoding="utf-8") as f:
+        with open(self.temp_config(), "w", encoding="utf-8") as f:
             json.dump(oc_cfg(srv.base), f)
         with fake_stdin("2\nA vs B\n\n3\n"), fake_argv(), \
                 captured_stdout() as out:

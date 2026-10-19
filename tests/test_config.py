@@ -1,13 +1,14 @@
 # Tests for ac_config: transport selection and config validation.
 import json
 import os
+import shutil
 import tempfile
 import unittest
 from typing import Any, cast
 from unittest import mock
 
 import ac_config
-from helpers import captured_stdout, oc_cfg
+from helpers import captured_stdout, oc_cfg, patched_attrs
 from ac_config import (
     DEFAULT_MAX_ROUNDS,
     DEFAULT_TEMPERATURE_DEBATER,
@@ -25,6 +26,48 @@ from ac_config import (
     valid_temperature,
     validate_config,
 )
+
+
+class TestAgentInstaller(unittest.TestCase):
+    def setUp(self):
+        self.tdir = tempfile.mkdtemp(prefix="ac_agent_")
+        self.addCleanup(shutil.rmtree, self.tdir, ignore_errors=True)
+        self.src = os.path.join(self.tdir, "debater.md")
+        with open(self.src, "w", encoding="utf-8") as f:
+            f.write("# agent\n")
+        self.enterContext(patched_attrs(
+            ac_config, AGENT_SRC=self.src,
+            OPENCODE_AGENTS_DIR=os.path.join(self.tdir, "agents")))
+
+    def test_installs_and_is_idempotent(self):
+        # the second call must compare content, not mtime/hash-of-bytes: on
+        # Windows the first write lands as CRLF and still reads back identical
+        with captured_stdout() as out:
+            self.assertTrue(ac_config.ensure_agent_installed())
+            self.assertTrue(ac_config.ensure_agent_installed())
+        self.assertIn("Websearch agent installed:", out.getvalue())
+        self.assertIn("already installed", out.getvalue())
+        with open(os.path.join(self.tdir, "agents", "debater.md"),
+                  encoding="utf-8") as f:
+            self.assertEqual(f.read(), "# agent\n")
+
+    def test_missing_template_fails(self):
+        self.enterContext(patched_attrs(
+            ac_config, AGENT_SRC=os.path.join(self.tdir, "nope.md")))
+        with captured_stdout() as out:
+            self.assertFalse(ac_config.ensure_agent_installed())
+        self.assertIn("Agent template missing", out.getvalue())
+
+    def test_unwritable_target_fails(self):
+        # a file where the agents dir should be: makedirs must fail cleanly
+        blocker = os.path.join(self.tdir, "blocker")
+        with open(blocker, "w", encoding="utf-8") as f:
+            f.write("x")
+        self.enterContext(patched_attrs(
+            ac_config, OPENCODE_AGENTS_DIR=os.path.join(blocker, "agents")))
+        with captured_stdout() as out:
+            self.assertFalse(ac_config.ensure_agent_installed())
+        self.assertIn("Could not install", out.getvalue())
 
 
 class TestConfig(unittest.TestCase):
