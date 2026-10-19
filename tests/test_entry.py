@@ -96,6 +96,14 @@ class TestEntry(FakeServerMixin, QuietRunMixin, unittest.TestCase):
         self.assertIn("Config invalid: missing 'agents' object", text)
         self.assertIn("Cannot start: missing 'agents' object", text)
 
+    def test_menu_reports_unexpected_run_errors(self):
+        # a plain bug (not a ConsensusError) must be reported, not crash the menu
+        self.write_oc_config()
+        with mock.patch.object(agent_consensus, "run_discussion",
+                               side_effect=ValueError("boom")):
+            text = self.run_menu("2\n3\n")
+        self.assertIn("ValueError: boom", text)
+
     def test_setup_aborts_on_eof(self):
         # `setup` with no stdin must not traceback, but must exit non-zero
         with fake_cli("", "setup") as out, self.assertRaises(SystemExit) as cm:

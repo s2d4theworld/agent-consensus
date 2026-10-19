@@ -123,6 +123,7 @@ def setup_wizard() -> bool:
     print()
     transport = input_optional("  Transport (opencode/openai)", TRANSPORT_OPENCODE).lower()
     if transport not in (TRANSPORT_OPENCODE, TRANSPORT_OPENAI):
+        print(f"  (unknown transport, using {TRANSPORT_OPENCODE})")
         transport = TRANSPORT_OPENCODE
     print()
     if transport == TRANSPORT_OPENCODE:

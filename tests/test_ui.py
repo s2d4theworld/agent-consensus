@@ -1,4 +1,5 @@
 # Tests for ac_ui: setup wizard, prompts and menu status lines.
+import contextlib
 import unittest
 from typing import Any
 from unittest import mock
@@ -8,6 +9,7 @@ from helpers import (
     FakeServerMixin,
     QuietRunMixin,
     WIZARD_STDIN_OPENAI,
+    WIZARD_STDIN_OPENCODE,
     WIZARD_STDIN_OPENCODE_NO_AGENT,
     captured_stdout,
     fake_stdin,
@@ -20,11 +22,21 @@ import ac_transports
 import ac_ui
 
 
+@contextlib.contextmanager
+def wizard_run(answers: str):
+    # drive the wizard on fake stdin/stdout; the installer is mocked so a
+    # test can never write to the real HOME
+    with mock.patch.object(ac_ui, "ensure_agent_installed",
+                           return_value=True), \
+            fake_stdin(answers), captured_stdout() as out:
+        yield out
+
+
 class TestUi(FakeServerMixin, QuietRunMixin, unittest.TestCase):
     def run_wizard(self, answers: str) -> Any:
         # answer the wizard with a fresh CONFIG_PATH; return the saved config
         cfg_path = self.temp_config()
-        with fake_stdin(answers), captured_stdout():
+        with wizard_run(answers):
             self.assertTrue(ac_ui.setup_wizard())
         return read_json(cfg_path)
 
@@ -37,7 +49,7 @@ class TestUi(FakeServerMixin, QuietRunMixin, unittest.TestCase):
     def test_setup_wizard_reports_save_failure(self):
         # unwritable target (missing directory): wizard must return False
         self.temp_config("no/config.json")
-        with fake_stdin(WIZARD_STDIN_OPENAI), captured_stdout() as out:
+        with wizard_run(WIZARD_STDIN_OPENAI) as out:
             self.assertFalse(ac_ui.setup_wizard())
         self.assertIn("cannot save", out.getvalue())
 
@@ -48,6 +60,17 @@ class TestUi(FakeServerMixin, QuietRunMixin, unittest.TestCase):
         for key in (ac_config.ROLE_PROPOSER, ac_config.ROLE_CRITIC,
                     ac_config.ROLE_JUDGE):
             self.assertNotIn("agent", cfg["agents"][key])
+
+    def test_wizard_warns_on_unknown_transport(self):
+        # a mistyped transport must warn and fall back to opencode
+        cfg_path = self.temp_config()
+        answers = "x\n" + WIZARD_STDIN_OPENCODE.split("\n", 1)[1]
+        with wizard_run(answers) as out:
+            self.assertTrue(ac_ui.setup_wizard())
+        self.assertIn("unknown transport", out.getvalue())
+        cfg = read_json(cfg_path)
+        self.assertTrue(all(a["transport"] == "opencode"
+                            for a in cfg["agents"].values()))
 
     def test_input_required_retries_on_empty(self):
         with fake_stdin("\n  \nx\n"), captured_stdout() as out:
