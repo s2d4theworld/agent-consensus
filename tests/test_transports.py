@@ -278,6 +278,18 @@ class TestTransports(FakeServerMixin, unittest.TestCase):
         self.assert_malformed(payloads, ac_transports.oc_session_create,
                               agent, "t")
 
+    def test_oc_session_create_sends_provider_and_model(self):
+        # "provider/model" splits into providerID/id; a slash-less model
+        # defaults to the opencode provider
+        srv = self.fake_server()
+        agent = oc_cfg(srv.base)["agents"]["proposer"]
+        ac_transports.oc_session_create(agent, "t")
+        agent["model"] = "beam-free"
+        ac_transports.oc_session_create(agent, "t")
+        self.assertEqual([s["model"] for s in srv.sessions],
+                         [{"id": "x", "providerID": "opencode"},
+                          {"id": "beam-free", "providerID": "opencode"}])
+
     def test_oc_send_rejects_malformed_response(self):
         agent = oc_cfg("http://x")["agents"]["proposer"]
         payloads: list[object] = [

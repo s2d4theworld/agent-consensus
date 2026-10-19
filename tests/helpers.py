@@ -173,7 +173,7 @@ class _FakeHandler(BaseHTTPRequestHandler):
     def _handle_session(self, srv, payload):
         srv._counter += 1
         sid = f"ses_fake{srv._counter:04d}test2018"
-        srv.sessions.append({"id": sid, "title": payload.get("title")})
+        srv.sessions.append({**payload, "id": sid})  # full posted payload
         self._json({"id": sid})
 
     def _handle_message(self, srv, payload):
