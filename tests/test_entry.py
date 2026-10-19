@@ -3,8 +3,7 @@ import json
 import unittest
 from unittest import mock
 
-import ac_ui
-import agent_consensus
+# helpers first: importing it puts the repo root on sys.path for ac_*
 from helpers import (
     FakeServerMixin,
     QuietRunMixin,
@@ -12,6 +11,9 @@ from helpers import (
     fake_cli,
     oc_cfg,
 )
+
+import ac_ui
+import agent_consensus
 
 
 class TestEntry(FakeServerMixin, QuietRunMixin, unittest.TestCase):

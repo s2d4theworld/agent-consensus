@@ -5,9 +5,7 @@ import unittest
 from typing import Any
 from unittest import mock
 
-import ac_engine
-from ac_engine import build_prompts, parse_max_rounds, parse_verdict, run_discussion
-from ac_errors import ServerUnreachable, TransportError
+# helpers first: importing it puts the repo root on sys.path for ac_*
 from helpers import (
     FakeServerMixin,
     QuietRunMixin,
@@ -16,6 +14,10 @@ from helpers import (
     oc_cfg,
     stateless_cfg,
 )
+
+import ac_engine
+from ac_engine import build_prompts, parse_max_rounds, parse_verdict, run_discussion
+from ac_errors import ServerUnreachable, TransportError
 
 
 class TestParseMaxRounds(unittest.TestCase):
@@ -67,9 +69,14 @@ class TestOpencodeEngine(FakeServerMixin, QuietRunMixin, unittest.TestCase):
         super().setUp()
         self.srv = self.fake_server()
 
+    def run_oc(self, verdicts: list[str], **cfg_kwargs: Any) -> str:
+        # the common shape: queue the judge's verdicts, run against this
+        # test's server and return the captured output
+        self.srv.verdicts[:] = verdicts
+        return self.run_engine(oc_cfg(self.srv.base, **cfg_kwargs))
+
     def test_consensus_after_two_rounds_and_cleanup(self):
-        self.srv.verdicts[:] = ["NO - not yet.", "YES - agreed."]
-        out = self.run_engine(oc_cfg(self.srv.base, max_rounds=3))
+        out = self.run_oc(["NO - not yet.", "YES - agreed."], max_rounds=3)
         self.assertIn("Final status : CONSENSUS", out)
         self.assertIn("[Judge] skipped in round 1", out)
         self.assertEqual(len(self.srv.sessions), 3)
@@ -134,8 +141,7 @@ class TestOpencodeEngine(FakeServerMixin, QuietRunMixin, unittest.TestCase):
         self.assertIn(", 2 rounds", out.getvalue())
 
     def test_single_round_ends_unjudged(self):
-        self.srv.verdicts[:] = ["NO - still apart."]
-        out = self.run_engine(oc_cfg(self.srv.base, max_rounds=1))
+        out = self.run_oc(["NO - still apart."], max_rounds=1)
         self.assertIn("[Judge] 1 round only, no judgement will be given", out)
         self.assertNotIn("[Judge:", out)
         self.assertIn("NO CONSENSUS (hit max rounds)", out)
@@ -154,15 +160,13 @@ class TestOpencodeEngine(FakeServerMixin, QuietRunMixin, unittest.TestCase):
 
     def test_missing_agent_warns_and_falls_back(self):
         self.srv.agent_names.clear()
-        self.srv.verdicts[:] = ["YES - agree."]
-        out = self.run_engine(oc_cfg(self.srv.base, max_rounds=2))
+        out = self.run_oc(["YES - agree."], max_rounds=2)
         self.assertIn("[Warn] agent 'debater' not on", out)
         self.assertIn("Final status : CONSENSUS", out)
         self.assertIsNone(self.srv.msgs[0]["agent"])
 
     def test_judge_gets_isolated_session_without_judge_role(self):
-        self.srv.verdicts[:] = ["YES - agree."]
-        self.run_engine(oc_cfg(self.srv.base, with_judge=False, max_rounds=2))
+        self.run_oc(["YES - agree."], with_judge=False, max_rounds=2)
         self.assertEqual(len({s["id"] for s in self.srv.sessions}), 3)
         judge_msgs = [m for m in self.srv.msgs
                       if m["system"].startswith("You are a neutral judge")]
@@ -171,8 +175,7 @@ class TestOpencodeEngine(FakeServerMixin, QuietRunMixin, unittest.TestCase):
         self.assertNotEqual(judge_msgs[0]["sid"], prop_msgs[0]["sid"])
 
     def test_message_ids_are_deterministic(self):
-        self.srv.verdicts[:] = ["YES - agree."]
-        self.run_engine(oc_cfg(self.srv.base))
+        self.run_oc(["YES - agree."])
         for m in self.srv.msgs:
             self.assertRegex(m["messageID"],
                              rf"^msg_{m['sid'][4:16]}_t0_[0-9a-f]{{8}}$")
@@ -182,8 +185,7 @@ class TestOpencodeEngine(FakeServerMixin, QuietRunMixin, unittest.TestCase):
         # regression: st["sent"] was recorded before the agent's own turn was
         # appended, so round 2 reused the round-1 message id, the server
         # deduped it and the proposer replayed its opening verbatim
-        self.srv.verdicts[:] = ["YES - agreed."]
-        self.run_engine(oc_cfg(self.srv.base, max_rounds=2))
+        self.run_oc(["YES - agreed."], max_rounds=2)
         prop = [m for m in self.srv.msgs if "PROPOSER" in m["system"]]
         self.assertEqual(len(prop), 2)
         sid = prop[0]["sid"][4:16]
@@ -199,8 +201,7 @@ class TestOpencodeEngine(FakeServerMixin, QuietRunMixin, unittest.TestCase):
         self.srv.session_list.append({"id": sid, "title": "agent-consensus old"})
         self.srv.session_list.append(
             {"id": fresh_sid, "title": f"agent-consensus proposer {fresh_ts}"})
-        self.srv.verdicts[:] = ["YES - agree."]
-        self.run_engine(oc_cfg(self.srv.base))
+        self.run_oc(["YES - agree."])
         # unparseable title = old orphan -> deleted; fresh title -> left alone
         self.assertIn(f"/session/{sid}", self.srv.deletes)
         self.assertNotIn(f"/session/{fresh_sid}", self.srv.deletes)

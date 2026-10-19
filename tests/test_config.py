@@ -5,8 +5,10 @@ import unittest
 from typing import Any, cast
 from unittest import mock
 
-import ac_config
+# helpers first: importing it puts the repo root on sys.path for ac_*
 from helpers import captured_stdout, oc_cfg, patched_attrs, read_json, temp_dir
+
+import ac_config
 from ac_config import (
     DEFAULT_MAX_ROUNDS,
     DEFAULT_TEMPERATURE_DEBATER,
@@ -153,7 +155,7 @@ class TestConfig(unittest.TestCase):
         path = os.path.join(tdir, "config.json")
         with open(path, "w", encoding="utf-8-sig") as f:
             json.dump(oc_cfg("http://x"), f)
-        with mock.patch.object(ac_config, "CONFIG_PATH", path):
+        with patched_attrs(ac_config, CONFIG_PATH=path):
             cfg = ac_config.load_config()
         self.assertIsNotNone(cfg)
         self.assertIn("agents", cfg or {})
@@ -170,7 +172,7 @@ class TestConfig(unittest.TestCase):
         path = os.path.join(tdir, "config.json")
         with open(path, "w", encoding="utf-8") as f:
             f.write('{"old": true}')
-        with mock.patch.object(ac_config, "CONFIG_PATH", path), \
+        with patched_attrs(ac_config, CONFIG_PATH=path), \
                 mock.patch.object(ac_config.json, "dump",
                                   side_effect=OSError("disk full")), \
                 captured_stdout():
@@ -182,7 +184,7 @@ class TestConfig(unittest.TestCase):
         # the bool contract holds for any config, not just OSError paths
         tdir = self.enterContext(temp_dir())
         path = os.path.join(tdir, "config.json")
-        with mock.patch.object(ac_config, "CONFIG_PATH", path), \
+        with patched_attrs(ac_config, CONFIG_PATH=path), \
                 captured_stdout() as out:
             self.assertFalse(save_config(cast(Any, {"agents": {1, 2}})))
         self.assertIn("cannot save", out.getvalue())

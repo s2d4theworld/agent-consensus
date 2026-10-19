@@ -5,9 +5,7 @@ import unittest
 from unittest import mock
 from urllib.error import URLError
 
-import ac_config
-import ac_transports
-from ac_errors import TransportError
+# helpers first: importing it puts the repo root on sys.path for ac_*
 from helpers import (
     FakeServerMixin,
     captured_stdout,
@@ -15,6 +13,10 @@ from helpers import (
     env_var,
     oc_cfg,
 )
+
+import ac_config
+import ac_transports
+from ac_errors import TransportError
 
 
 def stateless_agent(url: str = "http://127.0.0.1:1/v1/chat/completions",
