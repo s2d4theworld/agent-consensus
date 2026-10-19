@@ -1,0 +1,4 @@
+# The CLI itself needs only the Python 3.11+ standard library.
+# Development and CI tooling (keep in sync with .github/workflows):
+mypy==2.4.0
+pylint==4.1.3

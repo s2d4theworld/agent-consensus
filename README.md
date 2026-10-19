@@ -118,10 +118,15 @@ Structure (Python 3.11+, stdlib only):
     transcripts/             — one transcript per session
     tests/                   — offline regression tests, one file per module
     tools/                   — end-to-end golden-output check (tools/golden/)
+    requirements.txt         — dev/CI tooling only (runtime is stdlib-only)
 
 ## Tests
 
     python -m unittest discover -s tests -v
+
+Lint/type tooling is pinned in `requirements.txt` to the CI versions:
+
+    pip install -r requirements.txt
 
 Everything runs offline against a local fake `opencode serve`: engine flows
 (consensus, no-consensus, missing-agent fallback, judge isolation, orphan

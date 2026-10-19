@@ -1,33 +1,28 @@
 # Tests for the CLI entry point: argument dispatch and menu behavior.
-import contextlib
-import io
 import os
 import unittest
 from unittest import mock
 
 import ac_config
 import agent_consensus
-from helpers import QuietRunMixin, fake_argv, fake_stdin
+from helpers import QuietRunMixin, captured_stdout, fake_argv, fake_stdin
 
 
 class TestEntry(QuietRunMixin, unittest.TestCase):
     def test_menu_quits_on_3(self):
         ac_config.CONFIG_PATH = os.path.join(self._tdir, "missing.json")
-        buf = io.StringIO()
-        with fake_stdin("3\n"), fake_argv(), contextlib.redirect_stdout(buf):
+        with fake_stdin("3\n"), fake_argv(), captured_stdout() as out:
             agent_consensus.main()
-        out = buf.getvalue()
-        self.assertIn("No config yet", out)
-        self.assertIn("[2] Start discussion", out)
+        self.assertIn("No config yet", out.getvalue())
+        self.assertIn("[2] Start discussion", out.getvalue())
 
     def test_setup_aborts_on_eof(self):
         # `setup` with no stdin must not traceback, but must exit non-zero
-        buf = io.StringIO()
-        with fake_stdin(""), fake_argv("setup"), contextlib.redirect_stdout(buf):
-            with self.assertRaises(SystemExit) as cm:
-                agent_consensus.main()
+        with fake_stdin(""), fake_argv("setup"), captured_stdout() as out, \
+                self.assertRaises(SystemExit) as cm:
+            agent_consensus.main()
         self.assertEqual(cm.exception.code, 1)
-        self.assertIn("Setup aborted", buf.getvalue())
+        self.assertIn("Setup aborted", out.getvalue())
 
     def test_setup_save_failure_exits_1(self):
         with fake_argv("setup"), mock.patch.object(

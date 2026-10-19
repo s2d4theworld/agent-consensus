@@ -1,6 +1,4 @@
 # Tests for ac_ui: setup wizard, prompts and menu status lines.
-import contextlib
-import io
 import json
 import os
 import unittest
@@ -9,7 +7,13 @@ from unittest import mock
 import ac_config
 import ac_transports
 import ac_ui
-from helpers import FakeServerMixin, QuietRunMixin, fake_stdin, oc_cfg
+from helpers import (
+    FakeServerMixin,
+    QuietRunMixin,
+    captured_stdout,
+    fake_stdin,
+    oc_cfg,
+)
 
 
 class TestUi(FakeServerMixin, QuietRunMixin, unittest.TestCase):
@@ -17,8 +21,7 @@ class TestUi(FakeServerMixin, QuietRunMixin, unittest.TestCase):
         cfg_path = os.path.join(self._tdir, "config.json")
         ac_config.CONFIG_PATH = cfg_path
         stdin = "openai\n" + "\n" * 5 * 3 + "3\n"
-        buf = io.StringIO()
-        with fake_stdin(stdin), contextlib.redirect_stdout(buf):
+        with fake_stdin(stdin), captured_stdout():
             self.assertTrue(ac_ui.setup_wizard())
         with open(cfg_path, "r", encoding="utf-8") as f:
             cfg = json.load(f)
@@ -29,33 +32,29 @@ class TestUi(FakeServerMixin, QuietRunMixin, unittest.TestCase):
     def test_setup_wizard_reports_save_failure(self):
         # unwritable target (missing directory): wizard must return False
         ac_config.CONFIG_PATH = os.path.join(self._tdir, "no", "config.json")
-        buf = io.StringIO()
         with fake_stdin("openai\n" + "\n" * 5 * 3 + "3\n"), \
-                contextlib.redirect_stdout(buf):
+                captured_stdout() as out:
             self.assertFalse(ac_ui.setup_wizard())
-        self.assertIn("cannot save", buf.getvalue())
+        self.assertIn("cannot save", out.getvalue())
 
     def test_input_required_retries_on_empty(self):
-        buf = io.StringIO()
-        with fake_stdin("\n  \nx\n"), contextlib.redirect_stdout(buf):
+        with fake_stdin("\n  \nx\n"), captured_stdout() as out:
             value = ac_ui.input_required("P: ")
         self.assertEqual(value, "x")
-        self.assertIn("(required)", buf.getvalue())
+        self.assertIn("(required)", out.getvalue())
 
     def test_wizard_rejects_invalid_temperature(self):
-        buf = io.StringIO()
-        with fake_stdin("\n\n\n\nnan\n"), contextlib.redirect_stdout(buf):
+        with fake_stdin("\n\n\n\nnan\n"), captured_stdout() as out:
             agent = ac_ui._prompt_agent(ac_config.ROLE_JUDGE,
                                         ac_config.TRANSPORT_OPENAI)
         self.assertEqual(agent["temperature"], 0.0)
-        self.assertIn("invalid temperature", buf.getvalue())
+        self.assertIn("invalid temperature", out.getvalue())
 
     def test_print_status_without_judge(self):
-        buf = io.StringIO()
-        with contextlib.redirect_stdout(buf):
+        with captured_stdout() as out:
             ac_ui.print_status(oc_cfg("http://127.0.0.1:1", with_judge=False, agent=None),
                                None)
-        self.assertIn("Judge: none configured - proposer will judge", buf.getvalue())
+        self.assertIn("Judge: none configured - proposer will judge", out.getvalue())
 
     def test_restricted_agent_lines_states(self):
         srv = self.fake_server()

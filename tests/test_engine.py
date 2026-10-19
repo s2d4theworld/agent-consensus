@@ -1,8 +1,5 @@
 # Tests for ac_engine: parsing helpers and the debate engines
 # (stateful opencode + stateless openai), including the fail-fast checks.
-import contextlib
-import io
-import os
 import time
 import unittest
 from typing import Any
@@ -11,7 +8,14 @@ from unittest import mock
 import ac_engine
 from ac_engine import build_prompts, parse_max_rounds, parse_verdict, run_discussion
 from ac_errors import ServerUnreachable, TransportError
-from helpers import FakeServerMixin, QuietRunMixin, closed_port, oc_cfg, stateless_cfg
+from helpers import (
+    FakeServerMixin,
+    QuietRunMixin,
+    captured_stdout,
+    closed_port,
+    oc_cfg,
+    stateless_cfg,
+)
 
 
 class TestParseMaxRounds(unittest.TestCase):
@@ -72,10 +76,9 @@ class TestOpencodeEngine(FakeServerMixin, QuietRunMixin, unittest.TestCase):
         self.assertEqual(sorted(s["title"].split(" ")[1] for s in self.srv.sessions),
                          ["critic", "judge", "proposer"])
         self.assertEqual(len(self.srv.deletes), 3)
-        tfiles = [f for f in os.listdir(self._tdir) if f.endswith(".txt")]
-        self.assertEqual(len(tfiles), 1)
-        with open(os.path.join(self._tdir, tfiles[0]), encoding="utf-8") as f:
-            transcript = f.read()
+        files = self.transcripts()
+        self.assertEqual(len(files), 1)
+        transcript = next(iter(files.values()))
         self.assertIn("STATUS: CONSENSUS", transcript)
         self.assertIn("JUDGE NOTE: YES - agreed.", transcript)
 
@@ -107,22 +110,28 @@ class TestOpencodeEngine(FakeServerMixin, QuietRunMixin, unittest.TestCase):
                 raise TransportError("opencode: boom")
             return orig(disc, key, sys_prompt)
 
-        buf = io.StringIO()
-        with mock.patch.object(ac_engine.Discussion, "_request_turn", flaky):
-            with contextlib.redirect_stdout(buf):
-                with self.assertRaises(TransportError):
-                    run_discussion(oc_cfg(self.srv.base, max_rounds=2),
-                                   topic="test topic")
-        self.assertIn(", 0 rounds", buf.getvalue())
-        tfiles = [f for f in os.listdir(self._tdir) if f.endswith(".txt")]
-        self.assertEqual(len(tfiles), 1)
-        with open(os.path.join(self._tdir, tfiles[0]), encoding="utf-8") as f:
-            transcript = f.read()
+        with mock.patch.object(ac_engine.Discussion, "_request_turn", flaky), \
+                captured_stdout() as out, self.assertRaises(TransportError):
+            run_discussion(oc_cfg(self.srv.base, max_rounds=2), topic="test topic")
+        self.assertIn(", 0 rounds", out.getvalue())
+        files = self.transcripts()
+        self.assertEqual(len(files), 1)
+        transcript = next(iter(files.values()))
         self.assertIn("--- Round 1 ---\n[P]\nProposer: I defend the topic.\n", transcript)
         self.assertNotIn("[C]", transcript)
         self.assertIn("STATUS: ABORTED", transcript)
         self.assertIn("ABORTED: TransportError: opencode: boom", transcript)
         self.assertEqual(len(self.srv.deletes), 1)  # session cleaned up on abort
+
+    def test_interrupted_judge_still_counts_the_round(self):
+        # Ctrl+C during the judge call: the round's turns are already on
+        # record, so the abort summary must still count that round
+        with mock.patch.object(ac_engine.Discussion, "judge_now",
+                               side_effect=KeyboardInterrupt()), \
+                captured_stdout() as out, self.assertRaises(KeyboardInterrupt):
+            run_discussion(oc_cfg(self.srv.base, max_rounds=2), topic="test topic")
+        self.assertIn("Final status : ABORTED", out.getvalue())
+        self.assertIn(", 2 rounds", out.getvalue())
 
     def test_single_round_ends_unjudged(self):
         self.srv.verdicts[:] = ["NO - still apart."]
@@ -137,12 +146,11 @@ class TestOpencodeEngine(FakeServerMixin, QuietRunMixin, unittest.TestCase):
                                return_value="20260101_000000"):
             self.run_engine(oc_cfg(self.srv.base))
             self.run_engine(oc_cfg(self.srv.base))
-        tfiles = sorted(f for f in os.listdir(self._tdir) if f.endswith(".txt"))
-        self.assertEqual(tfiles, ["discussion_20260101_000000.txt",
-                                  "discussion_20260101_000000_2.txt"])
-        for name in tfiles:
-            with open(os.path.join(self._tdir, name), encoding="utf-8") as f:
-                self.assertIn("STATUS:", f.read())
+        texts = self.transcripts()
+        self.assertEqual(list(texts), ["discussion_20260101_000000.txt",
+                                       "discussion_20260101_000000_2.txt"])
+        for text in texts.values():
+            self.assertIn("STATUS:", text)
 
     def test_missing_agent_warns_and_falls_back(self):
         self.srv.agent_names.clear()
@@ -237,9 +245,8 @@ class TestStatelessEngine(FakeServerMixin, QuietRunMixin, unittest.TestCase):
         # the preflight must not crash on a nonnumeric port; the request itself
         # fails later with urllib's own error instead
         cfg = stateless_cfg("http://127.0.0.1:notaport/v1/chat/completions")
-        with contextlib.redirect_stdout(io.StringIO()):
-            with self.assertRaises(TransportError) as cm:
-                run_discussion(cfg, topic="t")
+        with captured_stdout(), self.assertRaises(TransportError) as cm:
+            run_discussion(cfg, topic="t")
         self.assertNotIn("connection refused", str(cm.exception))
         self.assertIn("request failed", str(cm.exception))
 

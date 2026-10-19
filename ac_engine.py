@@ -63,9 +63,10 @@ class RunSummary:
         self.judged = False
         self.judge_failed = False
 
-    def add_round(self, rnd: int, result: JudgeRound) -> bool:
-        # record one judged round; True = consensus reached, stop the loop
-        self.rounds_done = rnd
+    def add_round(self, result: JudgeRound) -> bool:
+        # fold one judged round into the summary; True = consensus, stop the
+        # loop. rounds_done is not set here: run() records it before judging
+        # so an interrupted judge call still counts the round it interrupted.
         self.judged = self.judged or result.attempted
         self.judge_failed = self.judge_failed or result.failed
         if result.note is not None:
@@ -405,7 +406,10 @@ class Discussion:
                 print(f"  [Round {rnd}] {self.critic['name']} is evaluating...", flush=True)
                 self._debate_turn(ROLE_CRITIC)
 
-                if summary.add_round(rnd, self._judge_round(rnd)):
+                # the round's turns are on record: an interrupted judge call
+                # must not hide the round it interrupted
+                summary.rounds_done = rnd
+                if summary.add_round(self._judge_round(rnd)):
                     break
         except BaseException as e:
             try:

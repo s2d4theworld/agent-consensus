@@ -49,6 +49,14 @@ def fake_argv(*args: str):
         sys.argv = old
 
 
+@contextlib.contextmanager
+def captured_stdout():
+    # redirect stdout into a buffer and yield it for assertions
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        yield buf
+
+
 class _FakeHandler(BaseHTTPRequestHandler):
     # state lives on the FakeServer; the server carries it (see _FakeHTTPServer)
     @property
@@ -241,7 +249,15 @@ class QuietRunMixin:
         shutil.rmtree(self._tdir, ignore_errors=True)
 
     def run_engine(self, cfg):
-        buf = io.StringIO()
-        with contextlib.redirect_stdout(buf):
+        with captured_stdout() as out:
             run_discussion(cfg, topic="test topic")
-        return buf.getvalue()
+        return out.getvalue()
+
+    def transcripts(self) -> dict[str, str]:
+        # transcript file name -> full text, in name order
+        files = {}
+        for name in sorted(os.listdir(self._tdir)):
+            if name.endswith(".txt"):
+                with open(os.path.join(self._tdir, name), encoding="utf-8") as f:
+                    files[name] = f.read()
+        return files

@@ -1,6 +1,4 @@
 # Tests for ac_config: transport selection and config validation.
-import contextlib
-import io
 import json
 import os
 import tempfile
@@ -9,7 +7,7 @@ from typing import Any, cast
 from unittest import mock
 
 import ac_config
-from helpers import oc_cfg
+from helpers import captured_stdout, oc_cfg
 from ac_config import (
     DEFAULT_MAX_ROUNDS,
     DEFAULT_TEMPERATURE_DEBATER,
@@ -109,9 +107,9 @@ class TestConfig(unittest.TestCase):
         self.assertEqual(coerce_max_rounds("99"), 99)
 
     def test_save_config_reports_unwritable_path(self):
-        with mock.patch("builtins.open", side_effect=OSError("read-only")):
-            with contextlib.redirect_stdout(io.StringIO()) as out:
-                self.assertFalse(save_config(oc_cfg("http://x")))
+        with mock.patch("builtins.open", side_effect=OSError("read-only")), \
+                captured_stdout() as out:
+            self.assertFalse(save_config(oc_cfg("http://x")))
         self.assertIn("cannot save", out.getvalue())
 
     def test_save_config_keeps_previous_config_on_failure(self):
@@ -120,11 +118,11 @@ class TestConfig(unittest.TestCase):
             path = os.path.join(tdir, "config.json")
             with open(path, "w", encoding="utf-8") as f:
                 f.write('{"old": true}')
-            with mock.patch.object(ac_config, "CONFIG_PATH", path):
-                with mock.patch.object(ac_config.json, "dump",
-                                       side_effect=OSError("disk full")):
-                    with contextlib.redirect_stdout(io.StringIO()):
-                        self.assertFalse(save_config(oc_cfg("http://x")))
+            with mock.patch.object(ac_config, "CONFIG_PATH", path), \
+                    mock.patch.object(ac_config.json, "dump",
+                                      side_effect=OSError("disk full")), \
+                    captured_stdout():
+                self.assertFalse(save_config(oc_cfg("http://x")))
             with open(path, "r", encoding="utf-8") as f:
                 self.assertEqual(json.load(f), {"old": True})
             self.assertFalse(os.path.exists(path + ".tmp"))
@@ -133,9 +131,9 @@ class TestConfig(unittest.TestCase):
         # the bool contract holds for any config, not just OSError paths
         with tempfile.TemporaryDirectory() as tdir:
             path = os.path.join(tdir, "config.json")
-            with mock.patch.object(ac_config, "CONFIG_PATH", path):
-                with contextlib.redirect_stdout(io.StringIO()) as out:
-                    self.assertFalse(save_config(cast(Any, {"agents": {1, 2}})))
+            with mock.patch.object(ac_config, "CONFIG_PATH", path), \
+                    captured_stdout() as out:
+                self.assertFalse(save_config(cast(Any, {"agents": {1, 2}})))
             self.assertIn("cannot save", out.getvalue())
             self.assertFalse(os.path.exists(path))
 
