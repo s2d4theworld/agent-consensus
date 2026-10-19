@@ -45,6 +45,13 @@ class Turn(NamedTuple):
     model: str
     text: str
 
+class JudgeRound(NamedTuple):
+    # one judging attempt; skipped (round 1) has attempted == failed == False
+    consensus: bool = False
+    note: str | None = None
+    attempted: bool = False
+    failed: bool = False
+
 Turns = list[Turn]
 Available = dict[str, set[str] | None]       # base_url -> agent names (None = unreachable)
 EffectiveAgents = dict[str, str | None]      # role -> restricted agent actually in use
@@ -97,6 +104,18 @@ def check_servers(cfg: Config) -> Available:
         raise ServerUnreachable(f"cannot reach {', '.join(down)} - is `opencode serve` running?")
     return available
 
+def _endpoint_target(url: str) -> tuple[str, int] | None:
+    try:
+        parts = urllib.parse.urlsplit(url)
+        hostname = parts.hostname
+        port = parts.port or (443 if parts.scheme == "https" else 80)
+    except ValueError:
+        return None  # malformed URL/port: the request itself will complain later
+    return (hostname, port) if hostname else None
+
+def _connection_refused(err: OSError) -> bool:
+    return isinstance(err, ConnectionRefusedError) or getattr(err, "winerror", None) == 10061
+
 def check_stateless_endpoints(cfg: Config) -> None:
     # fail fast when a stateless endpoint refuses TCP connections; the first
     # model call would otherwise burn ~2 minutes of connection retries.
@@ -109,19 +128,13 @@ def check_stateless_endpoints(cfg: Config) -> None:
         if url in seen:
             continue
         seen.add(url)
-        try:
-            parts = urllib.parse.urlsplit(url)
-            hostname = parts.hostname
-            port = parts.port or (443 if parts.scheme == "https" else 80)
-        except ValueError:
-            continue  # malformed URL/port: the request itself will complain later
-        if not hostname:
+        target = _endpoint_target(url)
+        if target is None:
             continue
         try:
-            socket.create_connection((hostname, port),
-                                     timeout=TIMEOUT_PREFLIGHT).close()
+            socket.create_connection(target, timeout=TIMEOUT_PREFLIGHT).close()
         except OSError as e:
-            if isinstance(e, ConnectionRefusedError) or getattr(e, "winerror", None) == 10061:
+            if _connection_refused(e):
                 raise ServerUnreachable(f"cannot reach {url} - connection refused") from e
             print(f"  [Warn] {url} not reachable directly ({e}) - trying anyway")
 
@@ -148,7 +161,7 @@ def resolve_restricted_agents(cfg: Config, available: Available) -> EffectiveAge
 
 def build_prompts(topic: str, proposer: AgentCfg, critic: AgentCfg,
                   agent_eff: EffectiveAgents) -> tuple[str, str]:
-    def tools_line(key):
+    def tools_line(key: str) -> str:
         if agent_eff.get(key):
             return ("You may use the websearch tool to verify facts when needed, "
                     "but no other tools; otherwise reply with text only. Language: English.")
@@ -244,7 +257,7 @@ class Discussion:
         self.turns: Turns = []
         self.started_at = 0.0  # set by start()
         self.ts = time.strftime(TS_FORMAT)
-        self.path = os.path.join(ac_config.TRANSCRIPT_DIR, f"discussion_{self.ts}.txt")
+        self.path = ""  # reserved by start()
         self.initial_msg = f"Discussion topic: {topic}\nStart the discussion now."
 
     def start(self) -> None:
@@ -258,6 +271,7 @@ class Discussion:
         print(f"  [Transport] {', '.join(transports)}\n")
         header = (f"TOPIC: {self.topic}\nSTART: {time.ctime()}\n"
                   f"JUDGE: {self.judge['name']} ({self.judge['model']})\n{'='*60}\n\n")
+        self.path = self._reserve_transcript()
         self._write_transcript(header, mode="w")
 
     def full_view(self, agent_key: str) -> list[dict[str, str]]:
@@ -323,6 +337,8 @@ class Discussion:
         consensus = False
         rounds_done = 0
         judge_note = ""
+        judged = False
+        judge_failed = False
         try:
             for rnd in range(1, self.max_rounds + 1):
                 rounds_done = rnd
@@ -334,10 +350,12 @@ class Discussion:
                 print(f"  [Round {rnd}] {self.critic['name']} is evaluating...", flush=True)
                 self._debate_turn(ROLE_CRITIC, self.critic_sys)
 
-                ok, note = self._judge_round(rnd)
-                if note is not None:
-                    judge_note = note
-                if ok:
+                result = self._judge_round(rnd)
+                judged = judged or result.attempted
+                judge_failed = judge_failed or result.failed
+                if result.note is not None:
+                    judge_note = result.note
+                if result.consensus:
                     consensus = True
                     break
         except BaseException as e:
@@ -348,7 +366,8 @@ class Discussion:
                 pass  # never mask the original failure
             raise
         else:
-            self.finish(consensus, rounds_done, judge_note)
+            self.finish(consensus, rounds_done, judge_note,
+                        no_verdict=judge_failed and not judged)
         finally:
             self.sessions.close_all()
 
@@ -358,34 +377,41 @@ class Discussion:
         self._append_turn(turn)
         _print_turn(turn)
 
-    def _judge_round(self, rnd: int) -> tuple[bool, str | None]:
+    def _judge_round(self, rnd: int) -> JudgeRound:
         # round 1 is opening positions only: there is nothing to judge yet,
-        # so even a 1-round run is never judged. None = no verdict this round
-        # (skipped or failed): the previous note stays in place.
+        # so even a 1-round run is never judged. A skipped/failed round has no
+        # note, so the previous note stays in place.
         if rnd == 1:
             if self.max_rounds == 1:
                 print("  [Judge] 1 round only, no judgement will be given\n")
             else:
                 print("  [Judge] skipped in round 1\n")
-            return False, None
+            return JudgeRound()
         try:
             ok, note = self.judge_now()
         except Exception as e:
             print(f"  [Judge] failed to evaluate: {e}\n")
-            return False, None
+            return JudgeRound(failed=True)
         print(f"  [Judge: {self.judge['name']} "
               f"({self.judge['model']})] {note}\n")
-        return ok, note
+        return JudgeRound(ok, note, attempted=True)
 
     def finish(self, consensus: bool, rounds_done: int, judge_note: str,
-               aborted: str | None = None) -> None:
+               aborted: str | None = None, no_verdict: bool = False) -> None:
         # final summary on screen + transcript footer
         elapsed = time.time() - self.started_at
-        status = "ABORTED" if aborted else (
-            "CONSENSUS" if consensus else "NO CONSENSUS (hit max rounds)")
+        if aborted:
+            status = "ABORTED"
+        elif consensus:
+            status = "CONSENSUS"
+        elif no_verdict:
+            status = "NO VERDICT (judge unavailable)"
+        else:
+            status = "NO CONSENSUS (hit max rounds)"
+        plural = "" if rounds_done == 1 else "s"
         print("=" * 60)
         print(f"  Final status : {status}")
-        print(f"  Duration     : {elapsed:.0f} sec, {rounds_done} rounds")
+        print(f"  Duration     : {elapsed:.0f} sec, {rounds_done} round{plural}")
         print(f"  Transcript   : {self.path}")
         print("=" * 60)
         footer = (f"{'='*60}\nSTATUS: {status}\n"
@@ -393,6 +419,18 @@ class Discussion:
         if aborted:
             footer += f"ABORTED: {aborted}\n"
         self._write_transcript(footer)
+
+    def _reserve_transcript(self) -> str:
+        # exclusive create: a second run started in the same second must not
+        # overwrite the earlier transcript
+        base = os.path.join(ac_config.TRANSCRIPT_DIR, f"discussion_{self.ts}")
+        path, n = base + ".txt", 2
+        while True:
+            try:
+                with open(path, "x", encoding="utf-8"):
+                    return path
+            except FileExistsError:
+                path, n = f"{base}_{n}.txt", n + 1
 
     def _write_transcript(self, text: str, mode: str = "a") -> None:
         # single writer: encoding and the append-only rule (a turn is durable

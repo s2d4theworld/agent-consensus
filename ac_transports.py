@@ -18,6 +18,8 @@ from typing import Any
 from ac_config import (
     AgentCfg,
     AGENT_LIST_TTL,
+    DEFAULT_TEMPERATURE_DEBATER,
+    DEFAULT_TEMPERATURE_JUDGE,
     MESSAGE_ID_TPL,
     RETRY_500_WAITS,
     RETRY_AFTER_MAX,
@@ -32,6 +34,7 @@ from ac_config import (
     TIMEOUT_MESSAGE,
     TIMEOUT_SESSION,
     TS_FORMAT,
+    api_key_env,
 )
 from ac_errors import TransportError
 
@@ -117,35 +120,86 @@ def strip_control_tokens(text: str) -> str:
     # Strip leaked control tokens from model output (e.g. <|constrain|>, <|channel|>)
     return re.sub(r"<\|[^|]*\|>", "", text).strip()
 
+def _json_object(data: Any, where: str) -> dict[str, Any]:
+    if not isinstance(data, dict):
+        raise TransportError(f"unexpected response from {where}: expected a JSON object")
+    return data
+
+def _oc_error(data: dict[str, Any]) -> None:
+    # opencode reports model/tool failures inside the message envelope
+    info = data.get("info")
+    err = info.get("error") if isinstance(info, dict) else None
+    if not err:
+        return
+    if not isinstance(err, dict):
+        raise TransportError(f"opencode: {err}")
+    err_data = err.get("data")
+    detail = (err_data.get("message") if isinstance(err_data, dict) else None) \
+        or err.get("name") or "unknown error"
+    raise TransportError(f"opencode: {detail}")
+
+def _oc_text(parts: object, kind: str, where: str) -> str:
+    # extract one part kind defensively: a malformed envelope must surface as
+    # a transport error, not as an AttributeError from deep inside parsing
+    if not isinstance(parts, list):
+        raise TransportError(f"unexpected response from {where}: missing 'parts'")
+    texts: list[str] = []
+    for part in parts:
+        if not isinstance(part, dict):
+            raise TransportError(f"unexpected response from {where}: malformed part")
+        text = part.get("text")
+        if part.get("type") != kind:
+            continue
+        if not isinstance(text, str):
+            raise TransportError(f"unexpected response from {where}: part has no text")
+        texts.append(text)
+    return "\n".join(texts).strip()
+
 # ---------- Transport: OpenAI-compatible (stateless) ----------
+def _api_key(agent_key: str, agent_cfg: AgentCfg) -> str:
+    key = agent_cfg.get("api_key")
+    if key:
+        return key
+    env_name = api_key_env(agent_key)
+    key = os.environ.get(env_name, "")
+    if key:
+        return key
+    raise TransportError(
+        f"API key for agent '{agent_key}' is missing. Set it in "
+        f"config.json or env {env_name}."
+    )
+
+def _chat_content(data: Any, where: str) -> str:
+    choices = _json_object(data, where).get("choices")
+    if not isinstance(choices, list) or not choices:
+        raise TransportError(f"unexpected response from {where}: missing 'choices'")
+    first = choices[0]
+    msg = first.get("message") if isinstance(first, dict) else None
+    if not isinstance(msg, dict):
+        raise TransportError(f"unexpected response from {where}: missing 'choices[0].message'")
+    content = msg.get("content") or msg.get("reasoning_content") or ""
+    if not isinstance(content, str):
+        raise TransportError(f"unexpected response from {where}: message content is not text")
+    return content
+
 def chat_completion(agent_key: str, agent_cfg: AgentCfg, system_prompt: str,
                     messages: list[dict[str, str]], role: str | None = None) -> str:
     # role decides the default temperature: a judging call must stay
     # deterministic even when it falls back to a debater's agent config
     role = role or agent_key
-    api_key = agent_cfg.get("api_key")
-    if not api_key:
-        env_name = f"CONSENSUS_API_KEY_{agent_key.upper()}"
-        api_key = os.environ.get(env_name, "")
-    if not api_key:
-        raise TransportError(
-            f"API key for agent '{agent_key}' is missing. Set it in "
-            f"config.json or env {env_name}."
-        )
+    api_key = _api_key(agent_key, agent_cfg)
     payload = {
         "model": agent_cfg["model"],
         "messages": [{"role": "system", "content": system_prompt}] + messages,
         # the judge should be deterministic; debaters benefit from some variety
-        "temperature": agent_cfg.get("temperature", 0.0 if role == ROLE_JUDGE else 0.7),
+        "temperature": agent_cfg.get(
+            "temperature",
+            DEFAULT_TEMPERATURE_JUDGE if role == ROLE_JUDGE else DEFAULT_TEMPERATURE_DEBATER,
+        ),
     }
-    data = post_json(
-        agent_cfg["api_url"],
-        payload,
-        headers={"Authorization": f"Bearer {api_key}"},
-    )
-    msg = data["choices"][0]["message"]
-    content = msg.get("content") or msg.get("reasoning_content") or ""
-    content = strip_control_tokens(content)
+    where = agent_cfg["api_url"]
+    data = post_json(where, payload, headers={"Authorization": f"Bearer {api_key}"})
+    content = strip_control_tokens(_chat_content(data, where))
     if not content:
         raise TransportError(f"empty response from model '{agent_cfg['model']}'")
     return content
@@ -163,8 +217,18 @@ def oc_session_create(agent_cfg: AgentCfg, title: str) -> str:
         "model": {"id": model_id, "providerID": provider},
         "title": title,
     }
-    data = post_json(oc_base_url(agent_cfg) + "/session", payload, timeout=TIMEOUT_SESSION)
-    return data["id"]
+    where = oc_base_url(agent_cfg) + "/session"
+    data = post_json(where, payload, timeout=TIMEOUT_SESSION)
+    session_id = _json_object(data, where).get("id")
+    if not isinstance(session_id, str) or not session_id:
+        raise TransportError(f"unexpected response from {where}: missing 'id'")
+    return session_id
+
+def _message_id(session_id: str, turn_index: int, text: str) -> str:
+    # content-derived id: a retry with the identical payload reuses the id and
+    # the server dedupes it instead of appending the same turn twice
+    digest = hashlib.sha256(text.encode("utf-8")).hexdigest()[:8]
+    return MESSAGE_ID_TPL.format(sid=session_id[4:16], turn=turn_index, digest=digest)
 
 def oc_send(agent_cfg: AgentCfg, session_id: str, system_prompt: str, text: str,
             agent_name: str | None = None, turn_index: int | None = None) -> str:
@@ -175,33 +239,21 @@ def oc_send(agent_cfg: AgentCfg, session_id: str, system_prompt: str, text: str,
     if agent_name:
         payload["agent"] = agent_name
     if turn_index is not None:
-        # content-derived id: a retry with the identical payload reuses the id
-        # and the server dedupes it instead of appending the same turn twice
-        # (verified); different content always gets a fresh id
-        digest = hashlib.sha256(text.encode("utf-8")).hexdigest()[:8]
-        payload["messageID"] = MESSAGE_ID_TPL.format(sid=session_id[4:16],
-                                                     turn=turn_index,
-                                                     digest=digest)
-    data = post_json(
-        f"{oc_base_url(agent_cfg)}/session/{session_id}/message",
-        payload,
-        timeout=TIMEOUT_MESSAGE,
-    )
-    info = data.get("info") or {}
-    if info.get("error"):
-        err = info["error"]
-        detail = (err.get("data") or {}).get("message") or err.get("name") or "unknown error"
-        raise TransportError(f"opencode: {detail}")
-    parts = data.get("parts") or []
-    out = "\n".join(p.get("text", "") for p in parts if p.get("type") == "text").strip()
+        # content-derived: an identical retry dedupes, changed text is fresh
+        payload["messageID"] = _message_id(session_id, turn_index, text)
+    where = f"{oc_base_url(agent_cfg)}/session/{session_id}/message"
+    data = _json_object(post_json(where, payload, timeout=TIMEOUT_MESSAGE), where)
+    _oc_error(data)
+    parts = data.get("parts")
+    out = _oc_text(parts, "text", where)
     if not out:
-        out = "\n".join(p.get("text", "") for p in parts if p.get("type") == "reasoning").strip()
+        out = _oc_text(parts, "reasoning", where)
     out = strip_control_tokens(out)
     if not out:
         raise TransportError(f"opencode: empty response from model '{agent_cfg['model']}'")
     return out
 
-def oc_delete_url(base_url: str, session_id: str) -> None:
+def _delete_session(base_url: str, session_id: str) -> None:
     try:
         req = urllib.request.Request(
             f"{base_url}/session/{session_id}", method="DELETE"
@@ -212,7 +264,7 @@ def oc_delete_url(base_url: str, session_id: str) -> None:
         pass
 
 def oc_delete(agent_cfg: AgentCfg, session_id: str) -> None:
-    oc_delete_url(oc_base_url(agent_cfg), session_id)
+    _delete_session(oc_base_url(agent_cfg), session_id)
 
 def _session_last_activity(session: dict, title: str) -> float:
     # server-reported last activity (ms epoch) wins; older servers without it
@@ -239,18 +291,22 @@ def oc_sweep(base_url: str, prefix: str = SESSION_TITLE_PREFIX,
         return
     now = time.time()
     for s in data:
+        if not isinstance(s, dict):
+            continue
         title = s.get("title") or ""
         sid = s.get("id")
         if not (sid and title.startswith(prefix)):
             continue
         if now - _session_last_activity(s, title) >= min_age:
-            oc_delete_url(base_url, sid)
+            _delete_session(base_url, sid)
 
 def oc_agent_list(base_url: str, timeout: float = TIMEOUT_LIST) -> set[str] | None:
     # names of agents available on the server; None if unreachable
     try:
         data = http_get_json(base_url + "/agent", timeout)
     except Exception:
+        return None
+    if not isinstance(data, list):
         return None
     names: set[str] = set()
     for a in data:

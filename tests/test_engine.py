@@ -73,6 +73,16 @@ class TestOpencodeEngine(QuietRunMixin, unittest.TestCase):
         self.assertIn("[Judge] failed to evaluate: boom", out)
         self.assertIn("Final status : CONSENSUS", out)
 
+    def test_all_judge_failures_report_no_verdict(self):
+        # a run where the judge never answered must not be reported as a
+        # genuine "no consensus" verdict
+        with mock.patch.object(ac_engine.Discussion, "judge_now",
+                               side_effect=RuntimeError("down")):
+            out = self.run_engine(oc_cfg(self.srv.base, max_rounds=2))
+        self.assertIn("[Judge] failed to evaluate: down", out)
+        self.assertIn("NO VERDICT (judge unavailable)", out)
+        self.assertNotIn("NO CONSENSUS", out)
+
     def test_abort_keeps_completed_turns_and_writes_footer(self):
         # a debater failure mid-round must not lose the turns that already
         # completed, and the transcript must still record the abort
@@ -102,6 +112,19 @@ class TestOpencodeEngine(QuietRunMixin, unittest.TestCase):
         self.assertIn("[Judge] 1 round only, no judgement will be given", out)
         self.assertNotIn("[Judge:", out)
         self.assertIn("NO CONSENSUS (hit max rounds)", out)
+        self.assertIn(", 1 round\n", out)
+
+    def test_same_timestamp_transcripts_do_not_overwrite(self):
+        with mock.patch.object(ac_engine.time, "strftime",
+                               return_value="20260101_000000"):
+            self.run_engine(oc_cfg(self.srv.base))
+            self.run_engine(oc_cfg(self.srv.base))
+        tfiles = sorted(f for f in os.listdir(self._tdir) if f.endswith(".txt"))
+        self.assertEqual(tfiles, ["discussion_20260101_000000.txt",
+                                  "discussion_20260101_000000_2.txt"])
+        for name in tfiles:
+            with open(os.path.join(self._tdir, name), encoding="utf-8") as f:
+                self.assertIn("STATUS:", f.read())
 
     def test_missing_agent_warns_and_falls_back(self):
         self.srv.agent_names.clear()

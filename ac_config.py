@@ -2,6 +2,7 @@
 # restricted-agent installer. Python stdlib only.
 import json
 import os
+from math import isfinite
 from typing import Any, NotRequired, TypedDict
 
 class AgentCfg(TypedDict):
@@ -33,6 +34,11 @@ TRANSPORT_OPENAI = "openai"
 ROLES = ("proposer", "critic", "judge")
 ROLE_PROPOSER, ROLE_CRITIC, ROLE_JUDGE = ROLES
 DEFAULT_MAX_ROUNDS = 10
+# debaters get some variety, the judge stays deterministic; one source for
+# the wizard suggestions and the transport fallbacks
+TEMPERATURE_MIN, TEMPERATURE_MAX = 0.0, 2.0
+DEFAULT_TEMPERATURE_JUDGE = 0.0
+DEFAULT_TEMPERATURE_DEBATER = 0.7
 
 # timeouts (seconds)
 TIMEOUT_DEFAULT = 180    # generic HTTP requests
@@ -81,19 +87,34 @@ def validate_config(cfg: object) -> str | None:
         if not isinstance(agents.get(key), dict):
             return f"missing agent '{key}' (outdated config? re-run setup)"
     for key, a in agents.items():
-        if not isinstance(a, dict):
-            return f"agent '{key}' is not an object"
-        for field in ("name", "api_url", "model"):
-            if not a.get(field):
-                return f"agent '{key}' is missing '{field}'"
-        if "://" not in a["api_url"]:
-            return f"agent '{key}' field 'api_url' must be a full URL (http://...)"
-        if a.get("transport", TRANSPORT_OPENAI) not in (TRANSPORT_OPENCODE, TRANSPORT_OPENAI):
-            return (f"agent '{key}' field 'transport' must be "
-                    f"'{TRANSPORT_OPENCODE}' or '{TRANSPORT_OPENAI}'")
-        if a.get("agent") is not None and not isinstance(a.get("agent"), str):
-            return f"agent '{key}' field 'agent' must be a string"
+        err = _agent_error(key, a)
+        if err:
+            return err
     return None
+
+def _agent_error(key: str, agent: Any) -> str | None:
+    if not isinstance(agent, dict):
+        return f"agent '{key}' is not an object"
+    for field in ("name", "api_url", "model"):
+        if not agent.get(field):
+            return f"agent '{key}' is missing '{field}'"
+    if "://" not in agent["api_url"]:
+        return f"agent '{key}' field 'api_url' must be a full URL (http://...)"
+    if agent.get("transport", TRANSPORT_OPENAI) not in (TRANSPORT_OPENCODE, TRANSPORT_OPENAI):
+        return (f"agent '{key}' field 'transport' must be "
+                f"'{TRANSPORT_OPENCODE}' or '{TRANSPORT_OPENAI}'")
+    if agent.get("agent") is not None and not isinstance(agent.get("agent"), str):
+        return f"agent '{key}' field 'agent' must be a string"
+    if "temperature" in agent and not valid_temperature(agent["temperature"]):
+        return (f"agent '{key}' field 'temperature' must be a number "
+                f"between {TEMPERATURE_MIN} and {TEMPERATURE_MAX}")
+    return None
+
+def valid_temperature(value: object) -> bool:
+    # bool is an int in Python but never a sensible temperature
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    return isfinite(value) and TEMPERATURE_MIN <= value <= TEMPERATURE_MAX
 
 def save_config(cfg: Config) -> None:
     with open(CONFIG_PATH, "w", encoding="utf-8") as f:
@@ -110,6 +131,10 @@ def coerce_max_rounds(value: Any) -> int:
 
 def transport_of(agent_cfg: AgentCfg) -> str:
     return agent_cfg.get("transport", TRANSPORT_OPENAI)
+
+def api_key_env(agent_key: str) -> str:
+    # the wizard prints this name and the transport reads it: keep one source
+    return f"CONSENSUS_API_KEY_{agent_key.upper()}"
 
 def is_opencode(agent_cfg: AgentCfg) -> bool:
     return transport_of(agent_cfg) == TRANSPORT_OPENCODE

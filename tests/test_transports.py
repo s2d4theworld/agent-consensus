@@ -103,6 +103,9 @@ class TestTransports(unittest.TestCase):
         srv.session_list = {}  # type: ignore[assignment]  # malformed: must not crash the sweep
         ac_transports.oc_sweep(srv.base)
         self.assertEqual(srv.deletes, [])
+        srv.session_list = ["junk"]  # type: ignore[list-item]  # malformed item
+        ac_transports.oc_sweep(srv.base)
+        self.assertEqual(srv.deletes, [])
 
     def test_oc_sweep_prefers_last_activity(self):
         srv = FakeServer()
@@ -142,6 +145,41 @@ class TestTransports(unittest.TestCase):
             "api_url": srv.base + "/v1/chat/completions"}
         with self.assertRaisesRegex(TransportError, "empty response"):
             ac_transports.chat_completion("proposer", chat_agent, "sys", [])
+
+    def test_chat_completion_rejects_malformed_response(self):
+        agent: ac_config.AgentCfg = {
+            "name": "X", "transport": "openai", "api_key": "k", "model": "m",
+            "api_url": "http://127.0.0.1:1/v1/chat/completions"}
+        payloads: list[object] = [
+            [], {},
+            {"choices": []},
+            {"choices": [{}]},
+            {"choices": [{"message": {"content": 5}}]},
+        ]
+        for payload in payloads:
+            with mock.patch.object(ac_transports, "post_json", return_value=payload):
+                with self.assertRaisesRegex(TransportError, "unexpected response"):
+                    ac_transports.chat_completion("proposer", agent, "sys", [])
+
+    def test_oc_session_create_rejects_malformed_response(self):
+        agent = oc_cfg("http://x")["agents"]["proposer"]
+        payloads: list[object] = [[], {}, {"id": 5}, {"id": ""}]
+        for payload in payloads:
+            with mock.patch.object(ac_transports, "post_json", return_value=payload):
+                with self.assertRaisesRegex(TransportError, "unexpected response"):
+                    ac_transports.oc_session_create(agent, "t")
+
+    def test_oc_send_rejects_malformed_response(self):
+        agent = oc_cfg("http://x")["agents"]["proposer"]
+        payloads: list[object] = [
+            {}, {"parts": [5]},
+            {"parts": [{"type": "text"}]},
+            {"parts": [{"type": "text", "text": 5}]},
+        ]
+        for payload in payloads:
+            with mock.patch.object(ac_transports, "post_json", return_value=payload):
+                with self.assertRaisesRegex(TransportError, "unexpected response"):
+                    ac_transports.oc_send(agent, "ses_fake0001test2018", "sys", "text")
 
     def test_oc_send_message_id_is_content_derived(self):
         # identical resend (lost-response retry) -> replayed by the server;

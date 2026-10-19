@@ -44,6 +44,19 @@ class TestUi(QuietRunMixin, unittest.TestCase):
         self.assertEqual(value, "x")
         self.assertIn("(required)", buf.getvalue())
 
+    def test_wizard_rejects_invalid_temperature(self):
+        old_stdin = sys.stdin
+        sys.stdin = io.StringIO("\n\n\n\nnan\n")
+        buf = io.StringIO()
+        try:
+            with contextlib.redirect_stdout(buf):
+                agent = ac_ui._prompt_agent(ac_config.ROLE_JUDGE,
+                                            ac_config.TRANSPORT_OPENAI)
+        finally:
+            sys.stdin = old_stdin
+        self.assertEqual(agent["temperature"], 0.0)
+        self.assertIn("invalid temperature", buf.getvalue())
+
     def test_print_status_without_judge(self):
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf):

@@ -3,18 +3,24 @@ from ac_config import (
     AgentCfg,
     Config,
     DEFAULT_MAX_ROUNDS,
+    DEFAULT_TEMPERATURE_DEBATER,
+    DEFAULT_TEMPERATURE_JUDGE,
     INSTALL_HINT,
     ROLES,
     ROLE_CRITIC,
     ROLE_JUDGE,
     ROLE_PROPOSER,
+    TEMPERATURE_MAX,
+    TEMPERATURE_MIN,
     TIMEOUT_MENU,
     TRANSPORT_OPENCODE,
     TRANSPORT_OPENAI,
+    api_key_env,
     coerce_max_rounds,
     ensure_agent_installed,
     is_opencode,
     save_config,
+    valid_temperature,
 )
 from ac_transports import oc_agent_list_cached, oc_base_url
 
@@ -57,37 +63,60 @@ def input_optional(prompt: str, default: str = "") -> str:
     v = input(prompt).strip()
     return v if v else default
 
+def _prompt_temperature(key: str) -> float:
+    default = (DEFAULT_TEMPERATURE_JUDGE if key == ROLE_JUDGE
+               else DEFAULT_TEMPERATURE_DEBATER)
+    raw = input_optional(
+        f"    Temperature ({TEMPERATURE_MIN}-{TEMPERATURE_MAX})", str(default))
+    try:
+        temp = float(raw)
+    except ValueError:
+        temp = default
+    if not valid_temperature(temp):
+        print(f"    (invalid temperature, using {default})")
+        temp = default
+    return temp
+
+def _prompt_opencode_agent(key: str) -> AgentCfg:
+    name = input_optional("    Display name", DEFAULT_NAMES[key])
+    url = input_optional("    Server URL", "http://127.0.0.1:4096")
+    agent_name = input_optional(
+        "    Restricted agent ('-' = none; 'debater' = websearch only)", "debater"
+    )
+    agent: AgentCfg = {
+        "name": name,
+        "api_url": url,
+        "model": input_optional("    Model", DEFAULT_MODELS[TRANSPORT_OPENCODE][key]),
+        "transport": TRANSPORT_OPENCODE,
+    }
+    if agent_name != "-":
+        agent["agent"] = agent_name
+    return agent
+
+def _prompt_openai_agent(key: str) -> AgentCfg:
+    name = input_optional("    Display name", DEFAULT_NAMES[key])
+    url = input_optional(
+        "    API URL (chat completions)",
+        "http://127.0.0.1:8645/v1/chat/completions")
+    raw = input_optional(
+        f"    API key (Enter = 'proxy'; type '-' to use env {api_key_env(key)}): ",
+        "proxy"
+    )
+    return {
+        "name": name,
+        "api_url": url,
+        "model": input_optional("    Model", DEFAULT_MODELS[TRANSPORT_OPENAI][key]),
+        "transport": TRANSPORT_OPENAI,
+        "api_key": "" if raw == "-" else raw,
+        "temperature": _prompt_temperature(key),
+    }
+
 def _prompt_agent(key: str, transport: str) -> AgentCfg:
     print(f"  --- Agent: {ROLE_DESCRIPTIONS[key]} ---")
-    # required keys are placeholder-filled here and set by the prompts below
-    a: AgentCfg = {"name": "", "api_url": "", "model": "", "transport": transport}
-    a["name"] = input_optional("    Display name", DEFAULT_NAMES[key])
-    if transport == TRANSPORT_OPENCODE:
-        a["api_url"] = input_optional("    Server URL", "http://127.0.0.1:4096")
-        agent_name = input_optional(
-            "    Restricted agent ('-' = none; 'debater' = websearch only)", "debater"
-        )
-        if agent_name != "-":
-            a["agent"] = agent_name
-    else:
-        a["api_url"] = input_optional(
-            "    API URL (chat completions)",
-            "http://127.0.0.1:8645/v1/chat/completions")
-        key_env = f"CONSENSUS_API_KEY_{key.upper()}"
-        raw = input_optional(
-            f"    API key (Enter = 'proxy'; type '-' to use env {key_env}): ", "proxy"
-        )
-        a["api_key"] = "" if raw == "-" else raw
-    a["model"] = input_optional("    Model", DEFAULT_MODELS[transport][key])
-    if transport == TRANSPORT_OPENAI:
-        default_temp = "0.0" if key == ROLE_JUDGE else "0.7"
-        t = input_optional("    Temperature (0.0-2.0)", default_temp)
-        try:
-            a["temperature"] = float(t)
-        except ValueError:
-            a["temperature"] = float(default_temp)
+    agent = (_prompt_opencode_agent(key) if transport == TRANSPORT_OPENCODE
+             else _prompt_openai_agent(key))
     print()
-    return a
+    return agent
 
 def setup_wizard() -> None:
     banner()
