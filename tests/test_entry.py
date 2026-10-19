@@ -12,6 +12,7 @@ from helpers import (
     oc_cfg,
 )
 
+import ac_engine
 import ac_ui
 import agent_consensus
 
@@ -42,18 +43,39 @@ class TestEntry(FakeServerMixin, QuietRunMixin, unittest.TestCase):
         wizard.assert_called_once_with()
         self.assertIn("Invalid choice.", out.getvalue())
 
+    def write_oc_config(self) -> None:
+        # save a config that points at this test's fake server
+        with open(self.temp_config(), "w", encoding="utf-8") as f:
+            json.dump(oc_cfg(self.fake_server().base), f)
+
     def test_menu_runs_discussion(self):
         # the primary menu action: choice 2 debates with the saved config,
         # waits for Enter, and returns to the menu
-        srv = self.fake_server()
-        with open(self.temp_config(), "w", encoding="utf-8") as f:
-            json.dump(oc_cfg(srv.base), f)
+        self.write_oc_config()
         with fake_cli("2\nA vs B\n\n3\n") as out:
             agent_consensus.main()
         text = out.getvalue()
         self.assertIn("Config found:", text)
         self.assertIn("Final status : NO CONSENSUS (hit max rounds)", text)
         self.assertIn("Press Enter to return to the menu...", text)
+
+    def test_menu_discussion_aborts_when_stdin_ends_at_the_topic_prompt(self):
+        # redirected stdin ends at the topic prompt: the run aborts cleanly
+        # and the menu survives to its next EOF
+        self.write_oc_config()
+        with fake_cli("2\n") as out:
+            agent_consensus.main()
+        self.assertIn("Discussion aborted: no input available", out.getvalue())
+
+    def test_menu_survives_interrupt_during_the_run(self):
+        # Ctrl+C while the run waits for a topic: safe_run reports it and the
+        # menu stays interactive (the trailing 3 quits it)
+        self.write_oc_config()
+        with mock.patch.object(ac_engine, "input_required",
+                               side_effect=KeyboardInterrupt):
+            with fake_cli("2\n3\n") as out:
+                agent_consensus.main()
+        self.assertIn("Interrupted.", out.getvalue())
 
     def test_setup_aborts_on_eof(self):
         # `setup` with no stdin must not traceback, but must exit non-zero
