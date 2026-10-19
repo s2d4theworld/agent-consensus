@@ -2,6 +2,7 @@
 # and the transport error envelopes.
 import time
 import unittest
+from typing import Any, Callable
 from unittest import mock
 from urllib.error import URLError
 
@@ -119,6 +120,15 @@ class TestTransports(FakeServerMixin, unittest.TestCase):
     def tearDown(self):
         ac_transports._AGENT_LIST_CACHE.clear()
 
+    def assert_malformed(self, payloads: list[object], call: Callable[..., str],
+                         *args: Any) -> None:
+        # every payload must be rejected as an unexpected response
+        for payload in payloads:
+            with mock.patch.object(ac_transports, "post_json",
+                                   return_value=payload):
+                with self.assertRaisesRegex(TransportError, "unexpected response"):
+                    call(*args)
+
     def test_agent_list_cache_ttl(self):
         calls = {"n": 0}
 
@@ -220,6 +230,16 @@ class TestTransports(FakeServerMixin, unittest.TestCase):
         with self.assertRaisesRegex(TransportError, "opencode: boom"):
             ac_transports.oc_send(agent, "ses_fake0001test2018", "sys", "text", turn_index=0)
 
+    def test_strip_control_tokens(self):
+        # leaked control tokens (seen from real free models) must be removed
+        # without touching ordinary text, pipes and angle brackets included
+        self.assertEqual(ac_transports.strip_control_tokens(
+            "  <|constrain|>YES - ok  "), "YES - ok")
+        self.assertEqual(ac_transports.strip_control_tokens(
+            "a <|channel|> b"), "a  b")
+        self.assertEqual(ac_transports.strip_control_tokens(
+            "100 < 200 | not a token"), "100 < 200 | not a token")
+
     def test_empty_model_reply_is_an_error(self):
         # empty output must fail loudly instead of becoming a silent blank turn
         srv = self.fake_server()
@@ -239,10 +259,8 @@ class TestTransports(FakeServerMixin, unittest.TestCase):
             {"choices": [{}]},
             {"choices": [{"message": {"content": 5}}]},
         ]
-        for payload in payloads:
-            with mock.patch.object(ac_transports, "post_json", return_value=payload):
-                with self.assertRaisesRegex(TransportError, "unexpected response"):
-                    ac_transports.chat_completion("proposer", agent, "sys", [])
+        self.assert_malformed(payloads, ac_transports.chat_completion,
+                              "proposer", agent, "sys", [])
 
     def test_chat_completion_uses_reasoning_content(self):
         # empty content with reasoning_content set: thinking models put the
@@ -257,10 +275,8 @@ class TestTransports(FakeServerMixin, unittest.TestCase):
     def test_oc_session_create_rejects_malformed_response(self):
         agent = oc_cfg("http://x")["agents"]["proposer"]
         payloads: list[object] = [[], {}, {"id": 5}, {"id": ""}]
-        for payload in payloads:
-            with mock.patch.object(ac_transports, "post_json", return_value=payload):
-                with self.assertRaisesRegex(TransportError, "unexpected response"):
-                    ac_transports.oc_session_create(agent, "t")
+        self.assert_malformed(payloads, ac_transports.oc_session_create,
+                              agent, "t")
 
     def test_oc_send_rejects_malformed_response(self):
         agent = oc_cfg("http://x")["agents"]["proposer"]
@@ -269,10 +285,8 @@ class TestTransports(FakeServerMixin, unittest.TestCase):
             {"parts": [{"type": "text"}]},
             {"parts": [{"type": "text", "text": 5}]},
         ]
-        for payload in payloads:
-            with mock.patch.object(ac_transports, "post_json", return_value=payload):
-                with self.assertRaisesRegex(TransportError, "unexpected response"):
-                    ac_transports.oc_send(agent, "ses_fake0001test2018", "sys", "text")
+        self.assert_malformed(payloads, ac_transports.oc_send,
+                              agent, "ses_fake0001test2018", "sys", "text")
 
     def test_oc_send_falls_back_to_reasoning_parts(self):
         # no text part at all, only a reasoning part: that is the answer

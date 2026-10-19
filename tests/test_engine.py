@@ -93,7 +93,7 @@ class TestOpencodeEngine(FakeServerMixin, QuietRunMixin, unittest.TestCase):
         # judge blows up in round 2, recovers in round 3
         with mock.patch.object(ac_engine.Discussion, "judge_now",
                                side_effect=[RuntimeError("boom"), (True, "YES - ok")]):
-            out = self.run_engine(oc_cfg(self.srv.base, max_rounds=3))
+            out = self.run_oc([], max_rounds=3)
         self.assertIn("[Judge] failed to evaluate: boom", out)
         self.assertIn("Final status : CONSENSUS", out)
 
@@ -102,7 +102,7 @@ class TestOpencodeEngine(FakeServerMixin, QuietRunMixin, unittest.TestCase):
         # genuine "no consensus" verdict
         with mock.patch.object(ac_engine.Discussion, "judge_now",
                                side_effect=RuntimeError("down")):
-            out = self.run_engine(oc_cfg(self.srv.base, max_rounds=2))
+            out = self.run_oc([], max_rounds=2)
         self.assertIn("[Judge] failed to evaluate: down", out)
         self.assertIn("NO VERDICT (judge unavailable)", out)
         self.assertNotIn("NO CONSENSUS", out)
