@@ -20,6 +20,11 @@ from ac_engine import build_prompts, parse_max_rounds, parse_verdict, run_discus
 from ac_errors import ServerUnreachable, TransportError
 
 
+def roles(messages: list[dict]) -> list[str]:
+    # payload message roles, in order
+    return [m["role"] for m in messages]
+
+
 class TestParseMaxRounds(unittest.TestCase):
     def test_parse_max_rounds(self):
         # deliberately malformed configs must not crash the parser
@@ -272,6 +277,31 @@ class TestStatelessEngine(FakeServerMixin, QuietRunMixin, unittest.TestCase):
         self.assertIn("Final status : CONSENSUS", out)
         self.assertEqual([p["temperature"] for p in self.srv.chats],
                          [0.7, 0.7, 0.7, 0.7, 0.0])
+
+    def test_stateless_history_roles_and_prefixes(self):
+        # the transport prepends the system prompt; after it, each request
+        # rebuilds the view: own turns are assistant messages, opponent turns
+        # are user messages prefixed with the speaker's name
+        self.cfg["max_rounds"] = 2
+        self.run_engine(self.cfg)
+        r1_proposer, r1_critic, r2_proposer, r2_critic, judge = [
+            c["messages"] for c in self.srv.chats]
+        self.assertEqual(roles(r1_proposer), ["system", "user"])
+        self.assertEqual(r1_proposer[1]["content"],
+                         "Discussion topic: test topic\n"
+                         "Start the discussion now.")
+        self.assertEqual(roles(r1_critic), ["system", "user", "user"])
+        self.assertEqual(r1_critic[2]["content"], "[A]: YES - agree")
+        self.assertEqual(roles(r2_proposer),
+                         ["system", "user", "assistant", "user"])
+        self.assertEqual(r2_proposer[2]["content"], "YES - agree")
+        self.assertEqual(roles(r2_critic),
+                         ["system", "user", "user", "assistant", "user"])
+        self.assertEqual(r2_critic[2]["content"], "[A]: YES - agree")
+        self.assertEqual(r2_critic[3]["content"], "YES - agree")
+        self.assertEqual(r2_critic[4]["content"], "[A]: YES - agree")
+        self.assertEqual(roles(judge), ["system", "user"])
+        self.assertTrue(judge[1]["content"].startswith("TOPIC: test topic\n\n"))
 
     def test_judge_fallback_still_uses_judge_temperature(self):
         # without a judge role the judging call runs on the proposer's config,
