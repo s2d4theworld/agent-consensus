@@ -19,9 +19,9 @@ from ac_config import (
     default_temperature,
     ensure_agent_installed,
     is_opencode,
+    parse_temperature,
     role_agents,
     save_config,
-    valid_temperature,
 )
 from ac_transports import oc_agent_list_cached, oc_base_url
 
@@ -68,13 +68,10 @@ def _prompt_temperature(key: str) -> float:
     default = default_temperature(key)
     raw = input_optional(
         f"    Temperature ({TEMPERATURE_MIN}-{TEMPERATURE_MAX})", str(default))
-    try:
-        temp = float(raw)
-    except ValueError:
-        temp = default
-    if not valid_temperature(temp):
+    temp = parse_temperature(raw)
+    if temp is None:
         print(f"    (invalid temperature, using {default})")
-        temp = default
+        return default
     return temp
 
 def _prompt_opencode_agent(key: str) -> AgentCfg:

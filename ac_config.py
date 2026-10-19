@@ -142,6 +142,15 @@ def valid_temperature(value: object) -> bool:
         return False
     return isfinite(value) and TEMPERATURE_MIN <= value <= TEMPERATURE_MAX
 
+def parse_temperature(value: str) -> float | None:
+    # wizard input: None when the text is not a usable temperature, so the
+    # caller can warn and pick a fallback
+    try:
+        temp = float(value)
+    except ValueError:
+        return None
+    return temp if valid_temperature(temp) else None
+
 def default_temperature(role: str) -> float:
     # the judge stays deterministic; debaters get some variety
     return DEFAULT_TEMPERATURE_JUDGE if role == ROLE_JUDGE else DEFAULT_TEMPERATURE_DEBATER

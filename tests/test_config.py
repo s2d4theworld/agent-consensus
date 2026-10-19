@@ -20,6 +20,7 @@ from ac_config import (
     coerce_max_rounds,
     default_temperature,
     is_opencode,
+    parse_temperature,
     role_agents,
     save_config,
     transport_of,
@@ -189,6 +190,13 @@ class TestConfig(unittest.TestCase):
             self.assertFalse(save_config(cast(Any, {"agents": {1, 2}})))
         self.assertIn("cannot save", out.getvalue())
         self.assertFalse(os.path.exists(path))
+
+    def test_parse_temperature(self):
+        # wizard input: usable numbers pass, everything else reads as None
+        self.assertEqual(parse_temperature("0.7"), 0.7)
+        self.assertEqual(parse_temperature("2"), 2.0)
+        for raw in ("", "abc", "2.1", "-0.1", "nan", "inf"):
+            self.assertIsNone(parse_temperature(raw), raw)
 
     def test_temperature_validation(self):
         cases: list[tuple[Any, bool]] = [

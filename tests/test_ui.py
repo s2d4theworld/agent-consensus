@@ -56,11 +56,14 @@ class TestUi(FakeServerMixin, QuietRunMixin, unittest.TestCase):
         self.assertIn("(required)", out.getvalue())
 
     def test_wizard_rejects_invalid_temperature(self):
-        with fake_stdin("\n\n\n\nnan\n"), captured_stdout() as out:
-            agent = ac_ui._prompt_agent(ac_config.ROLE_JUDGE,
-                                        ac_config.TRANSPORT_OPENAI)
-        self.assertEqual(agent["temperature"], 0.0)
-        self.assertIn("invalid temperature", out.getvalue())
+        # "abc" cannot even parse, "5"/"nan" parse but are not valid: all
+        # must warn and fall back to the judge default, none may be saved
+        for raw in ("abc", "5", "nan"):
+            with fake_stdin(f"\n\n\n\n{raw}\n"), captured_stdout() as out:
+                agent = ac_ui._prompt_agent(ac_config.ROLE_JUDGE,
+                                            ac_config.TRANSPORT_OPENAI)
+            self.assertEqual(agent["temperature"], 0.0)
+            self.assertIn("invalid temperature", out.getvalue())
 
     def test_print_status_without_judge(self):
         with captured_stdout() as out:
