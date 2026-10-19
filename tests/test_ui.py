@@ -1,5 +1,4 @@
 # Tests for ac_ui: setup wizard, prompts and menu status lines.
-import json
 import unittest
 from unittest import mock
 
@@ -10,9 +9,11 @@ from helpers import (
     FakeServerMixin,
     QuietRunMixin,
     WIZARD_STDIN_OPENAI,
+    WIZARD_STDIN_OPENCODE_NO_AGENT,
     captured_stdout,
     fake_stdin,
     oc_cfg,
+    read_json,
 )
 
 
@@ -21,8 +22,7 @@ class TestUi(FakeServerMixin, QuietRunMixin, unittest.TestCase):
         cfg_path = self.temp_config()
         with fake_stdin(WIZARD_STDIN_OPENAI), captured_stdout():
             self.assertTrue(ac_ui.setup_wizard())
-        with open(cfg_path, "r", encoding="utf-8") as f:
-            cfg = json.load(f)
+        cfg = read_json(cfg_path)
         self.assertEqual(cfg["max_rounds"], 3)
         self.assertTrue(all(a["transport"] == "openai" for a in cfg["agents"].values()))
         self.assertEqual(cfg["agents"]["judge"]["temperature"], 0.0)
@@ -33,6 +33,17 @@ class TestUi(FakeServerMixin, QuietRunMixin, unittest.TestCase):
         with fake_stdin(WIZARD_STDIN_OPENAI), captured_stdout() as out:
             self.assertFalse(ac_ui.setup_wizard())
         self.assertIn("cannot save", out.getvalue())
+
+    def test_wizard_opencode_dash_omits_agent(self):
+        # '-' at the restricted-agent prompt means "no agent": the saved role
+        # must have no agent key, so it runs with the server's full tool set
+        cfg_path = self.temp_config()
+        with fake_stdin(WIZARD_STDIN_OPENCODE_NO_AGENT), captured_stdout():
+            self.assertTrue(ac_ui.setup_wizard())
+        cfg = read_json(cfg_path)
+        for key in (ac_config.ROLE_PROPOSER, ac_config.ROLE_CRITIC,
+                    ac_config.ROLE_JUDGE):
+            self.assertNotIn("agent", cfg["agents"][key])
 
     def test_input_required_retries_on_empty(self):
         with fake_stdin("\n  \nx\n"), captured_stdout() as out:

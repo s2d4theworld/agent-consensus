@@ -11,6 +11,7 @@ import tempfile
 import threading
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from typing import Any
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
@@ -68,10 +69,41 @@ def temp_dir():
         yield path
 
 
-# setup-wizard stdin scripts: transport, then a blank answer for every prompt
-# (defaults), then the max_rounds answer "3" (not a menu quit)
-WIZARD_STDIN_OPENCODE = "opencode\n" + "\n" * 12 + "3\n"
-WIZARD_STDIN_OPENAI = "openai\n" + "\n" * 5 * 3 + "3\n"
+@contextlib.contextmanager
+def env_var(name: str, value: str):
+    # set one environment variable for the duration of the block
+    saved = os.environ.get(name)
+    os.environ[name] = value
+    try:
+        yield
+    finally:
+        if saved is None:
+            os.environ.pop(name, None)
+        else:
+            os.environ[name] = saved
+
+
+def read_json(path: str) -> Any:
+    # parse a JSON file written by the app (or by a test)
+    with open(path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def wizard_stdin(transport: str, *, agent: str = "", max_rounds: str = "3") -> str:
+    # setup-wizard answers in prompt order, every other prompt left default;
+    # opencode asks name/url/agent/model per role, openai name/url/key/model/
+    # temperature. The trailing answer is max_rounds, not a menu quit.
+    if transport == ac_config.TRANSPORT_OPENCODE:
+        role = f"\n\n{agent}\n\n"
+    else:
+        role = "\n\n\n\n\n"
+    return f"{transport}\n" + role * len(ac_config.ROLES) + f"{max_rounds}\n"
+
+
+WIZARD_STDIN_OPENCODE = wizard_stdin(ac_config.TRANSPORT_OPENCODE)
+WIZARD_STDIN_OPENCODE_NO_AGENT = wizard_stdin(
+    ac_config.TRANSPORT_OPENCODE, agent="-")
+WIZARD_STDIN_OPENAI = wizard_stdin(ac_config.TRANSPORT_OPENAI)
 
 
 class _FakeHandler(BaseHTTPRequestHandler):

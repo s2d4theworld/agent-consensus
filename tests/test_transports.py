@@ -8,7 +8,13 @@ from urllib.error import URLError
 import ac_config
 import ac_transports
 from ac_errors import TransportError
-from helpers import FakeServerMixin, captured_stdout, closed_port, oc_cfg
+from helpers import (
+    FakeServerMixin,
+    captured_stdout,
+    closed_port,
+    env_var,
+    oc_cfg,
+)
 
 
 def stateless_agent(url: str = "http://127.0.0.1:1/v1/chat/completions",
@@ -137,6 +143,22 @@ class TestTransports(FakeServerMixin, unittest.TestCase):
         del agent["api_key"]
         with self.assertRaisesRegex(TransportError, "API key for agent 'nokeyrole'"):
             ac_transports.chat_completion("nokeyrole", agent, "sys", [])
+
+    def test_chat_completion_reads_api_key_from_env(self):
+        # an empty api_key means "read CONSENSUS_API_KEY_<ROLE>": the wizard
+        # prints that name, so the transport must send that value as the token
+        agent = stateless_agent("http://x/v1/chat/completions")
+        agent["api_key"] = ""
+        reply = {"choices": [{"message": {"content": "ok"}}]}
+        with env_var(ac_config.api_key_env("proposer"), "env-secret"), \
+                mock.patch.object(ac_transports, "post_json",
+                                  return_value=reply) as post:
+            text = ac_transports.chat_completion("proposer", agent, "sys", [])
+        self.assertEqual(text, "ok")
+        call = post.call_args
+        assert call is not None
+        self.assertEqual(call.kwargs["headers"]["Authorization"],
+                         "Bearer env-secret")
 
     def test_oc_sweep_ignores_malformed_and_foreign_sessions(self):
         srv = self.fake_server()

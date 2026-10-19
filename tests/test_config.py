@@ -6,7 +6,7 @@ from typing import Any, cast
 from unittest import mock
 
 import ac_config
-from helpers import captured_stdout, oc_cfg, patched_attrs, temp_dir
+from helpers import captured_stdout, oc_cfg, patched_attrs, read_json, temp_dir
 from ac_config import (
     DEFAULT_MAX_ROUNDS,
     DEFAULT_TEMPERATURE_DEBATER,
@@ -175,8 +175,7 @@ class TestConfig(unittest.TestCase):
                                   side_effect=OSError("disk full")), \
                 captured_stdout():
             self.assertFalse(save_config(oc_cfg("http://x")))
-        with open(path, "r", encoding="utf-8") as f:
-            self.assertEqual(json.load(f), {"old": True})
+        self.assertEqual(read_json(path), {"old": True})
         self.assertFalse(os.path.exists(path + ".tmp"))
 
     def test_save_config_reports_non_serializable_config(self):
