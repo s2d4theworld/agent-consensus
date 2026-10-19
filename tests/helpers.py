@@ -31,9 +31,9 @@ def closed_port():
 def patched_attrs(module: object, **values: object):
     # temporarily replace module attributes; always restored
     saved = {name: getattr(module, name) for name in values}
-    for name, value in values.items():
-        setattr(module, name, value)
     try:
+        for name, value in values.items():
+            setattr(module, name, value)
         yield
     finally:
         for name, value in saved.items():
@@ -240,18 +240,16 @@ def stateless_cfg(url):
             "agents": {"proposer": dict(a), "critic": dict(a), "judge": dict(a)}}
 
 
-class QuietRunMixin:
+class QuietRunMixin(unittest.TestCase):
     # redirects the transcript dir and captures run_discussion output
     def setUp(self):
         self._tdir = tempfile.mkdtemp(prefix="ac_test_")
-        self._orig_tdir = ac_config.TRANSCRIPT_DIR
-        ac_config.TRANSCRIPT_DIR = self._tdir
-        self._orig_cfg_path = ac_config.CONFIG_PATH
-
-    def tearDown(self):
-        ac_config.TRANSCRIPT_DIR = self._orig_tdir
-        ac_config.CONFIG_PATH = self._orig_cfg_path
-        shutil.rmtree(self._tdir, ignore_errors=True)
+        self.addCleanup(shutil.rmtree, self._tdir, ignore_errors=True)
+        # CONFIG_PATH is re-patched to its current value so cleanup restores
+        # it even after tests point it at temp files
+        self.enterContext(patched_attrs(
+            ac_config, TRANSCRIPT_DIR=self._tdir,
+            CONFIG_PATH=ac_config.CONFIG_PATH))
 
     def run_engine(self, cfg):
         with captured_stdout() as out:

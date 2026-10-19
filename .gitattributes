@@ -1,0 +1,4 @@
+# One line ending everywhere: LF. Windows checkouts keep LF too, so the
+# golden files compare byte-identically with CI (Linux) and git never
+# rewrites endings on add/checkout. Overrides a global core.autocrlf=true.
+* text=auto eol=lf
