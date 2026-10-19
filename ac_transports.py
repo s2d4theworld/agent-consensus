@@ -26,6 +26,7 @@ from ac_config import (
     RETRY_HTTP_WAITS,
     SESSION_TITLE_PREFIX,
     SWEEP_MIN_AGE,
+    SWEEP_TITLE_MIN_AGE,
     TIMEOUT_DEFAULT,
     TIMEOUT_LIST,
     TIMEOUT_MESSAGE,
@@ -264,23 +265,26 @@ def _delete_session(base_url: str, session_id: str) -> None:
 def oc_delete(agent_cfg: AgentCfg, session_id: str) -> None:
     _delete_session(oc_base_url(agent_cfg), session_id)
 
-def _session_last_activity(session: dict, title: str) -> float:
-    # server-reported last activity (ms epoch) wins; older servers without it
-    # fall back to the creation time embedded in the title, and unparseable
-    # titles count as old orphans
+def _session_activity(session: dict, title: str) -> tuple[float, bool]:
+    # (last activity, server-reported). The server-reported time.updated
+    # refreshes on every message; the title only carries the creation stamp
+    # of older servers, and unparseable titles count as old orphans
     stamp = session.get("time")
     updated = stamp.get("updated") if isinstance(stamp, dict) else None
     if isinstance(updated, (int, float)) and updated > 0:
-        return updated / 1000.0
+        return updated / 1000.0, True
     try:
-        return time.mktime(time.strptime(title.rsplit(" ", 1)[-1], TS_FORMAT))
+        return time.mktime(time.strptime(title.rsplit(" ", 1)[-1], TS_FORMAT)), False
     except ValueError:
-        return 0.0
+        return 0.0, False
 
 def oc_sweep(base_url: str, prefix: str = SESSION_TITLE_PREFIX,
-             min_age: float = SWEEP_MIN_AGE) -> None:
-    # best-effort: delete orphan sessions left by crashed runs. Sessions with
-    # recent activity are skipped, so a live parallel run is not disturbed
+             min_age: float = SWEEP_MIN_AGE,
+             title_min_age: float = SWEEP_TITLE_MIN_AGE) -> None:
+    # best-effort: delete orphan sessions left by crashed runs. Recent
+    # server-reported activity protects a live parallel run; a title-only
+    # session (old server) is judged against the much longer title_min_age
+    # because its creation stamp never refreshes
     try:
         data = http_get_json(base_url + "/session", TIMEOUT_LIST)
     except Exception:
@@ -297,7 +301,9 @@ def oc_sweep(base_url: str, prefix: str = SESSION_TITLE_PREFIX,
             continue
         if not title.startswith(prefix):
             continue
-        if now - _session_last_activity(s, title) >= min_age:
+        last, reported = _session_activity(s, title)
+        limit = min_age if reported else title_min_age
+        if now - last >= limit:
             _delete_session(base_url, sid)
 
 def oc_agent_list(base_url: str, timeout: float = TIMEOUT_LIST) -> set[str] | None:

@@ -48,9 +48,13 @@ TIMEOUT_LIST = 15        # session list / delete / sweep
 TIMEOUT_MENU = 4         # agent list from the interactive menu (stay snappy)
 TIMEOUT_PREFLIGHT = 3    # TCP preflight per stateless endpoint
 AGENT_LIST_TTL = 5       # menu may reuse a recent agent-list lookup (seconds)
-# orphan sweep: skip sessions with activity newer than this (seconds); a
-# crashed run goes quiet, a parallel run keeps refreshing time.updated
+# orphan sweep: skip sessions with server-reported activity newer than this
+# (seconds); a crashed run goes quiet, a parallel run keeps refreshing
+# time.updated. Older servers report no activity: the title only carries the
+# creation stamp, which never refreshes, so a title-only session needs the
+# much longer age below to keep a live run from being swept
 SWEEP_MIN_AGE = 300
+SWEEP_TITLE_MIN_AGE = 12 * 3600
 SESSION_TITLE_PREFIX = "agent-consensus "  # the sweep recognizes titles by it
 TS_FORMAT = "%Y%m%d_%H%M%S"  # run-start stamp appended to session titles
 # deterministic message id: {sid} = session id without the "ses_" prefix, cut
@@ -79,6 +83,11 @@ def load_config() -> Config | None:
         print(f"  [config] cannot read {CONFIG_PATH}: {e}")
         return None
 
+def _role_items(agents: dict[str, Any]) -> list[tuple[str, Any]]:
+    # the single definition of which agents participate: unknown roles are
+    # warned about and ignored everywhere (validation, engine, wizard)
+    return [(key, a) for key, a in agents.items() if key in ROLES]
+
 def validate_config(cfg: object) -> str | None:
     agents = cfg.get("agents") if isinstance(cfg, dict) else None
     if not isinstance(agents, dict):
@@ -86,20 +95,30 @@ def validate_config(cfg: object) -> str | None:
     for key in (ROLE_PROPOSER, ROLE_CRITIC):
         if not isinstance(agents.get(key), dict):
             return f"missing agent '{key}' (outdated config? re-run setup)"
-    for key, a in agents.items():
+    for key, a in _role_items(agents):
+        if key == ROLE_JUDGE and not isinstance(a, dict):
+            continue  # the engine falls back to the proposer's config
         err = _agent_error(key, a)
         if err:
             return err
     return None
 
+def _required_str_error(key: str, field: str, value: object) -> str | None:
+    # absent, empty and whitespace-only values are all "missing"; any other
+    # non-string is a type error
+    if isinstance(value, str):
+        return None if value.strip() else f"agent '{key}' is missing '{field}'"
+    if value:
+        return f"agent '{key}' field '{field}' must be a string"
+    return f"agent '{key}' is missing '{field}'"
+
 def _agent_error(key: str, agent: Any) -> str | None:
     if not isinstance(agent, dict):
         return f"agent '{key}' is not an object"
     for field in ("name", "api_url", "model"):
-        if not agent.get(field):
-            return f"agent '{key}' is missing '{field}'"
-        if not isinstance(agent[field], str):
-            return f"agent '{key}' field '{field}' must be a string"
+        err = _required_str_error(key, field, agent.get(field))
+        if err:
+            return err
     if "://" not in agent["api_url"]:
         return f"agent '{key}' field 'api_url' must be a full URL (http://...)"
     if agent.get("transport", TRANSPORT_OPENAI) not in (TRANSPORT_OPENCODE, TRANSPORT_OPENAI):
@@ -125,11 +144,19 @@ def default_temperature(role: str) -> float:
     return DEFAULT_TEMPERATURE_JUDGE if role == ROLE_JUDGE else DEFAULT_TEMPERATURE_DEBATER
 
 def save_config(cfg: Config) -> bool:
+    # write a sibling temp file and replace: a failed write must never
+    # truncate the previous config
+    tmp = CONFIG_PATH + ".tmp"
     try:
-        with open(CONFIG_PATH, "w", encoding="utf-8") as f:
+        with open(tmp, "w", encoding="utf-8") as f:
             json.dump(cfg, f, indent=2, ensure_ascii=False)
+        os.replace(tmp, CONFIG_PATH)
     except OSError as e:
         print(f"  [config] cannot save {CONFIG_PATH}: {e}")
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
         return False
     print(f"  Config saved: {CONFIG_PATH}")
     return True
@@ -137,6 +164,8 @@ def save_config(cfg: Config) -> bool:
 def coerce_max_rounds(value: Any) -> int:
     # one rule for config files and wizard input: malformed values fall back
     # to the default, a valid value is never below 1 round
+    if isinstance(value, bool):
+        return DEFAULT_MAX_ROUNDS  # bool is an int in Python, never a round count
     try:
         return max(1, int(value))
     except (TypeError, ValueError, OverflowError):
@@ -153,8 +182,8 @@ def is_opencode(agent_cfg: AgentCfg) -> bool:
     return transport_of(agent_cfg) == TRANSPORT_OPENCODE
 
 def role_agents(cfg: Config) -> list[tuple[str, AgentCfg]]:
-    # unknown roles in config.json are warned about and ignored
-    return [(key, agent) for key, agent in cfg["agents"].items() if key in ROLES]
+    # typed view of _role_items for the rest of the app
+    return list(_role_items(cfg["agents"]))
 
 def ensure_agent_installed() -> bool:
     # copy the repo's restricted websearch agent into opencode's global

@@ -127,6 +127,27 @@ class TestTransports(unittest.TestCase):
         self.assertNotIn("/session/ses_live0001test2018", srv.deletes)
         self.assertIn("/session/ses_dead0001test2018", srv.deletes)
 
+    def test_oc_sweep_title_only_sessions_use_long_age(self):
+        # an older server reports no time.updated: the creation stamp never
+        # refreshes, so a long-running live session (older than min_age) must
+        # survive, while a genuinely stale one is still swept
+        srv = FakeServer()
+        self.addCleanup(srv.stop)
+        running_ts = time.strftime("%Y%m%d_%H%M%S",
+                                   time.localtime(time.time() - 3600))
+        stale_ts = time.strftime(
+            "%Y%m%d_%H%M%S",
+            time.localtime(time.time() - ac_config.SWEEP_TITLE_MIN_AGE - 60))
+        srv.session_list[:] = [
+            {"id": "ses_running01test2018",
+             "title": f"agent-consensus proposer {running_ts}"},
+            {"id": "ses_stale0001test2018",
+             "title": f"agent-consensus critic {stale_ts}"},
+        ]
+        ac_transports.oc_sweep(srv.base)
+        self.assertNotIn("/session/ses_running01test2018", srv.deletes)
+        self.assertIn("/session/ses_stale0001test2018", srv.deletes)
+
     def test_oc_send_error_envelope(self):
         srv = FakeServer()
         self.addCleanup(srv.stop)

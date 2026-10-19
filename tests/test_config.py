@@ -1,10 +1,14 @@
 # Tests for ac_config: transport selection and config validation.
 import contextlib
 import io
+import json
+import os
+import tempfile
 import unittest
 from typing import Any, cast
 from unittest import mock
 
+import ac_config
 from helpers import oc_cfg
 from ac_config import (
     DEFAULT_MAX_ROUNDS,
@@ -57,6 +61,25 @@ class TestConfig(unittest.TestCase):
             self.assertIn(f"field '{field}' must be a string",
                           validate_config(cfg) or "", field)
 
+    def test_validate_config_treats_blank_strings_as_missing(self):
+        cfg = cast(Any, oc_cfg("http://x"))
+        cfg["agents"]["critic"]["model"] = "   "
+        self.assertIn("missing 'model'", validate_config(cfg) or "")
+
+    def test_validate_config_ignores_unknown_roles(self):
+        # unknown roles are warned about and ignored at run time: a stale or
+        # malformed extra role must not block a valid config
+        cfg = cast(Any, oc_cfg("http://x"))
+        cfg["agents"]["backup"] = {"name": "B"}
+        self.assertIsNone(validate_config(cfg))
+
+    def test_validate_config_allows_non_dict_judge(self):
+        # the engine falls back to the proposer's config for a judge that is
+        # not an object, so validation must accept it too
+        cfg = cast(Any, oc_cfg("http://x"))
+        cfg["agents"]["judge"] = 5
+        self.assertIsNone(validate_config(cfg))
+
     def test_default_temperature_by_role(self):
         self.assertEqual(default_temperature(ROLE_JUDGE),
                          DEFAULT_TEMPERATURE_JUDGE)
@@ -77,6 +100,8 @@ class TestConfig(unittest.TestCase):
         self.assertEqual(coerce_max_rounds(float("-inf")), DEFAULT_MAX_ROUNDS)
         self.assertEqual(coerce_max_rounds(float("nan")), DEFAULT_MAX_ROUNDS)
         self.assertEqual(coerce_max_rounds("junk"), DEFAULT_MAX_ROUNDS)
+        self.assertEqual(coerce_max_rounds(True), DEFAULT_MAX_ROUNDS)
+        self.assertEqual(coerce_max_rounds(False), DEFAULT_MAX_ROUNDS)
         self.assertEqual(coerce_max_rounds(0), 1)
         self.assertEqual(coerce_max_rounds(3.9), 3)
 
@@ -85,6 +110,21 @@ class TestConfig(unittest.TestCase):
             with contextlib.redirect_stdout(io.StringIO()) as out:
                 self.assertFalse(save_config(oc_cfg("http://x")))
         self.assertIn("cannot save", out.getvalue())
+
+    def test_save_config_keeps_previous_config_on_failure(self):
+        # the atomic replace must not touch the old file when the write fails
+        with tempfile.TemporaryDirectory() as tdir:
+            path = os.path.join(tdir, "config.json")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write('{"old": true}')
+            with mock.patch.object(ac_config, "CONFIG_PATH", path):
+                with mock.patch.object(ac_config.json, "dump",
+                                       side_effect=OSError("disk full")):
+                    with contextlib.redirect_stdout(io.StringIO()):
+                        self.assertFalse(save_config(oc_cfg("http://x")))
+            with open(path, "r", encoding="utf-8") as f:
+                self.assertEqual(json.load(f), {"old": True})
+            self.assertFalse(os.path.exists(path + ".tmp"))
 
     def test_temperature_validation(self):
         cases: list[tuple[Any, bool]] = [

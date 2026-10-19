@@ -53,12 +53,13 @@ def safe_run_discussion(cfg: Config, topic: str | None = None) -> bool:
     except Exception as e:
         return _aborted(f"{type(e).__name__}: {e}")
 
-def run_wizard() -> None:
+def run_wizard() -> bool:
     # EOF/Ctrl+C mid-setup must not traceback; nothing is saved on abort
     try:
-        setup_wizard()
+        return setup_wizard()
     except (EOFError, KeyboardInterrupt):
         print("\n  Setup aborted.")
+        return False
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -105,9 +106,11 @@ def main() -> None:
     # `setup` or `install-agent` (including `chat`) opens the interactive menu
     args, _ = build_parser().parse_known_args()
     if args.command == "setup":
-        run_wizard()
+        if not run_wizard():
+            sys.exit(1)
     elif args.command == "install-agent":
-        ensure_agent_installed()
+        if not ensure_agent_installed():
+            sys.exit(1)
     else:
         menu()
 

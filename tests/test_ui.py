@@ -3,14 +3,13 @@ import contextlib
 import io
 import json
 import os
-import sys
 import unittest
 from unittest import mock
 
 import ac_config
 import ac_transports
 import ac_ui
-from helpers import FakeServer, QuietRunMixin, oc_cfg
+from helpers import FakeServer, QuietRunMixin, fake_stdin, oc_cfg
 
 
 class TestUi(QuietRunMixin, unittest.TestCase):
@@ -18,42 +17,36 @@ class TestUi(QuietRunMixin, unittest.TestCase):
         cfg_path = os.path.join(self._tdir, "config.json")
         ac_config.CONFIG_PATH = cfg_path
         stdin = "openai\n" + "\n" * 5 * 3 + "3\n"
-        old_stdin = sys.stdin
         buf = io.StringIO()
-        sys.stdin = io.StringIO(stdin)
-        try:
-            with contextlib.redirect_stdout(buf):
-                ac_ui.setup_wizard()
-        finally:
-            sys.stdin = old_stdin
+        with fake_stdin(stdin), contextlib.redirect_stdout(buf):
+            self.assertTrue(ac_ui.setup_wizard())
         with open(cfg_path, "r", encoding="utf-8") as f:
             cfg = json.load(f)
         self.assertEqual(cfg["max_rounds"], 3)
         self.assertTrue(all(a["transport"] == "openai" for a in cfg["agents"].values()))
         self.assertEqual(cfg["agents"]["judge"]["temperature"], 0.0)
 
-    def test_input_required_retries_on_empty(self):
-        old_stdin = sys.stdin
-        sys.stdin = io.StringIO("\n  \nx\n")
+    def test_setup_wizard_reports_save_failure(self):
+        # unwritable target (missing directory): wizard must return False
+        ac_config.CONFIG_PATH = os.path.join(self._tdir, "no", "config.json")
         buf = io.StringIO()
-        try:
-            with contextlib.redirect_stdout(buf):
-                value = ac_ui.input_required("P: ")
-        finally:
-            sys.stdin = old_stdin
+        with fake_stdin("openai\n" + "\n" * 5 * 3 + "3\n"), \
+                contextlib.redirect_stdout(buf):
+            self.assertFalse(ac_ui.setup_wizard())
+        self.assertIn("cannot save", buf.getvalue())
+
+    def test_input_required_retries_on_empty(self):
+        buf = io.StringIO()
+        with fake_stdin("\n  \nx\n"), contextlib.redirect_stdout(buf):
+            value = ac_ui.input_required("P: ")
         self.assertEqual(value, "x")
         self.assertIn("(required)", buf.getvalue())
 
     def test_wizard_rejects_invalid_temperature(self):
-        old_stdin = sys.stdin
-        sys.stdin = io.StringIO("\n\n\n\nnan\n")
         buf = io.StringIO()
-        try:
-            with contextlib.redirect_stdout(buf):
-                agent = ac_ui._prompt_agent(ac_config.ROLE_JUDGE,
-                                            ac_config.TRANSPORT_OPENAI)
-        finally:
-            sys.stdin = old_stdin
+        with fake_stdin("\n\n\n\nnan\n"), contextlib.redirect_stdout(buf):
+            agent = ac_ui._prompt_agent(ac_config.ROLE_JUDGE,
+                                        ac_config.TRANSPORT_OPENAI)
         self.assertEqual(agent["temperature"], 0.0)
         self.assertIn("invalid temperature", buf.getvalue())
 

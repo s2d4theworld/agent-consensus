@@ -162,7 +162,7 @@ def resolve_restricted_agents(cfg: Config, available: Available) -> EffectiveAge
     return agent_eff
 
 def build_prompts(topic: str, proposer: AgentCfg, critic: AgentCfg,
-                  agent_eff: EffectiveAgents) -> tuple[str, str]:
+                  agent_eff: EffectiveAgents) -> dict[str, str]:
     def tools_line(key: str) -> str:
         if agent_eff.get(key):
             return ("You may use the websearch tool to verify facts when needed, "
@@ -186,7 +186,7 @@ def build_prompts(topic: str, proposer: AgentCfg, critic: AgentCfg,
         "scrutiny. Don't argue just for the sake of arguing — but don't agree "
         f"without scrutiny. {tools_line(ROLE_CRITIC)}"
     )
-    return proposer_sys, critic_sys
+    return {ROLE_PROPOSER: proposer_sys, ROLE_CRITIC: critic_sys}
 
 class SessionState(TypedDict):
     # OpencodeSessions bookkeeping for one session role; id is "" until the
@@ -277,7 +277,7 @@ class Discussion:
                           else ROLE_PROPOSER)
         self.judge = cfg["agents"][self.judge_key]
         self.agent_eff = resolve_restricted_agents(cfg, available)
-        self.proposer_sys, self.critic_sys = build_prompts(
+        self.sys_prompts = build_prompts(
             topic, self.proposer, self.critic, self.agent_eff)
         self.sessions = OpencodeSessions(cfg)
         self.turns: Turns = []
@@ -311,21 +311,33 @@ class Discussion:
     def _session_title(self, role: str) -> str:
         return f"{SESSION_TITLE_PREFIX}{role} {self.transcript.ts}"
 
+    def _stateful_session(self, sess_key: str,
+                          cfg_key: str | None = None) -> SessionState:
+        # one session per debate role; cfg_key differs only when the judge
+        # falls back to a debater's agent config
+        return self.sessions.ensure(sess_key, self._session_title(sess_key),
+                                    cfg_key=cfg_key)
+
+    def _stateful_send(self, st: SessionState, system: str, text: str) -> str:
+        # every session send carries the same pair: the effective restricted
+        # agent and the session's current turn cursor
+        return oc_send(self.cfg["agents"][st["cfg_key"]], st["id"], system, text,
+                       agent_name=self.agent_eff.get(st["cfg_key"]),
+                       turn_index=st["sent"])
+
     def _request_turn(self, key: str, sys_prompt: str) -> str:
         a = self.cfg["agents"][key]
         if not is_opencode(a):
             return chat_completion(key, a, sys_prompt, self.full_view(key))
         # stateful: send only the turns this session hasn't seen yet
-        st = self.sessions.ensure(key, self._session_title(key))
+        st = self._stateful_session(key)
         parts = []
         if not st["started"]:
             parts.append(self.initial_msg)
         for turn in self.turns[st["sent"]:]:
             if turn.key != key:
                 parts.append(f"[{turn.name}]: {turn.text}")
-        out = oc_send(a, st["id"], sys_prompt, "\n\n".join(parts),
-                      agent_name=self.agent_eff.get(key), turn_index=st["sent"])
-        return out
+        return self._stateful_send(st, sys_prompt, "\n\n".join(parts))
 
     def take_turn(self, key: str, sys_prompt: str) -> Turn:
         # a debater turn: send, then record it and advance the session cursor
@@ -341,18 +353,15 @@ class Discussion:
     def judge_now(self) -> tuple[bool, str]:
         # stateless: full transcript each round. stateful: first call = full
         # transcript, later calls = only the new exchange
-        if not is_opencode(self.cfg["agents"][self.judge_key]):
+        if not is_opencode(self.judge):
             return check_consensus(self.cfg, self.topic, format_transcript(self.turns),
                                    self.judge_key)
-        st = self.sessions.ensure(ROLE_JUDGE, self._session_title(ROLE_JUDGE),
-                                  cfg_key=self.judge_key)
-        if not st["started"]:
-            text = _judge_prompt(self.topic, format_transcript(self.turns))
-        else:
+        st = self._stateful_session(ROLE_JUDGE, self.judge_key)
+        if st["started"]:
             text = "New exchange:\n\n" + format_transcript(self.turns[st["sent"]:])
-        out = oc_send(self.judge, st["id"], JUDGE_SYSTEM, text,
-                      agent_name=self.agent_eff.get(self.judge_key),
-                      turn_index=st["sent"])
+        else:
+            text = _judge_prompt(self.topic, format_transcript(self.turns))
+        out = self._stateful_send(st, JUDGE_SYSTEM, text)
         self.sessions.mark_seen(ROLE_JUDGE, len(self.turns))
         return parse_verdict(out), out
 
@@ -370,10 +379,10 @@ class Discussion:
                 self._start_round(rnd)
 
                 print(f"  [Round {rnd}] {self.proposer['name']} is thinking...", flush=True)
-                self._debate_turn(ROLE_PROPOSER, self.proposer_sys)
+                self._debate_turn(ROLE_PROPOSER)
 
                 print(f"  [Round {rnd}] {self.critic['name']} is evaluating...", flush=True)
-                self._debate_turn(ROLE_CRITIC, self.critic_sys)
+                self._debate_turn(ROLE_CRITIC)
                 rounds_done = rnd
 
                 result = self._judge_round(rnd)
@@ -397,9 +406,9 @@ class Discussion:
         finally:
             self.sessions.close_all()
 
-    def _debate_turn(self, key: str, sys_prompt: str) -> None:
+    def _debate_turn(self, key: str) -> None:
         # one debater turn: send, record, show; take_turn keeps the bookkeeping
-        turn = self.take_turn(key, sys_prompt)
+        turn = self.take_turn(key, self.sys_prompts[key])
         self._append_turn(turn)
         _print_turn(turn)
 

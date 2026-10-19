@@ -26,6 +26,28 @@ def closed_port():
         return s.getsockname()[1]
 
 
+@contextlib.contextmanager
+def fake_stdin(text: str):
+    # swap sys.stdin for an in-memory stream; always restored
+    old = sys.stdin
+    sys.stdin = io.StringIO(text)
+    try:
+        yield
+    finally:
+        sys.stdin = old
+
+
+@contextlib.contextmanager
+def fake_argv(*args: str):
+    # run the CLI entry point against a fixed argv; always restored
+    old = sys.argv
+    sys.argv = ["agent_consensus.py", *args]
+    try:
+        yield
+    finally:
+        sys.argv = old
+
+
 class _FakeHandler(BaseHTTPRequestHandler):
     # state lives on the FakeServer; the server carries it (see _FakeHTTPServer)
     @property

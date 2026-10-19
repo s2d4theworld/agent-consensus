@@ -117,7 +117,7 @@ def _prompt_agent(key: str, transport: str) -> AgentCfg:
     print()
     return agent
 
-def setup_wizard() -> None:
+def setup_wizard() -> bool:
     banner()
     print("  Transports:")
     print("    opencode = local `opencode serve` sessions (stateful, no api_key)")
@@ -141,9 +141,10 @@ def setup_wizard() -> None:
     cfg["max_rounds"] = coerce_max_rounds(
         input_optional("    Max discussion rounds", str(DEFAULT_MAX_ROUNDS)))
     if not save_config(cfg):
-        return
+        return False
     if transport == TRANSPORT_OPENCODE:
         ensure_agent_installed()
+    return True
 
 def restricted_agents_by_base(cfg: Config) -> dict[str, set[str]]:
     # {base_url: {agent names}} of restricted (websearch) agents per server

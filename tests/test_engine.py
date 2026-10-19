@@ -9,7 +9,7 @@ from typing import Any
 from unittest import mock
 
 import ac_engine
-from ac_engine import parse_max_rounds, parse_verdict, run_discussion
+from ac_engine import build_prompts, parse_max_rounds, parse_verdict, run_discussion
 from ac_errors import ServerUnreachable, TransportError
 from helpers import FakeServer, QuietRunMixin, closed_port, oc_cfg, stateless_cfg
 
@@ -43,6 +43,19 @@ class TestParseVerdict(unittest.TestCase):
         }
         for text, expected in cases.items():
             self.assertEqual(parse_verdict(text), expected, repr(text))
+
+
+class TestBuildPrompts(unittest.TestCase):
+    def test_prompts_are_keyed_by_debate_role(self):
+        agents = oc_cfg("http://x")["agents"]
+        prompts = build_prompts("topic", agents[ac_engine.ROLE_PROPOSER],
+                                agents[ac_engine.ROLE_CRITIC],
+                                {ac_engine.ROLE_PROPOSER: None,
+                                 ac_engine.ROLE_CRITIC: None})
+        self.assertEqual(sorted(prompts),
+                         [ac_engine.ROLE_CRITIC, ac_engine.ROLE_PROPOSER])
+        self.assertIn("PROPOSER", prompts[ac_engine.ROLE_PROPOSER])
+        self.assertIn("CRITIC", prompts[ac_engine.ROLE_CRITIC])
 
 
 class TestOpencodeEngine(QuietRunMixin, unittest.TestCase):
