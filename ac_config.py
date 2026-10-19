@@ -61,6 +61,7 @@ RETRY_HTTP_CODES = (429, 502, 503)   # transient upstream errors
 RETRY_HTTP_WAITS = (45, 90, 135)     # waits before retry 1/2/3 (seconds)
 RETRY_500_WAITS = (15,)              # a 500 is often deterministic: retry once, briefly
 RETRY_CONN_WAITS = (20, 40, 60)      # waits after connection failures
+RETRY_AFTER_MAX = 300                # cap for a server-provided Retry-After
 
 def load_config() -> Config | None:
     if not os.path.exists(CONFIG_PATH):

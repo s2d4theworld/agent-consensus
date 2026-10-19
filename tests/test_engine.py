@@ -73,22 +73,47 @@ class TestOpencodeEngine(QuietRunMixin, unittest.TestCase):
         self.assertIn("[Judge] failed to evaluate: boom", out)
         self.assertIn("Final status : CONSENSUS", out)
 
-    def test_no_consensus_hits_max_rounds(self):
+    def test_abort_keeps_completed_turns_and_writes_footer(self):
+        # a debater failure mid-round must not lose the turns that already
+        # completed, and the transcript must still record the abort
+        orig = ac_engine.Discussion._request_turn
+
+        def flaky(disc, key, sys_prompt):
+            if key == ac_engine.ROLE_CRITIC:
+                raise TransportError("opencode: boom")
+            return orig(disc, key, sys_prompt)
+
+        with mock.patch.object(ac_engine.Discussion, "_request_turn", flaky):
+            with self.assertRaises(TransportError):
+                self.run_engine(oc_cfg(self.srv.base, max_rounds=2))
+        tfiles = [f for f in os.listdir(self._tdir) if f.endswith(".txt")]
+        self.assertEqual(len(tfiles), 1)
+        with open(os.path.join(self._tdir, tfiles[0]), encoding="utf-8") as f:
+            transcript = f.read()
+        self.assertIn("--- Round 1 ---\n[P]\nProposer: I defend the topic.\n", transcript)
+        self.assertNotIn("[C]", transcript)
+        self.assertIn("STATUS: ABORTED", transcript)
+        self.assertIn("ABORTED: TransportError: opencode: boom", transcript)
+        self.assertEqual(len(self.srv.deletes), 1)  # session cleaned up on abort
+
+    def test_single_round_ends_unjudged(self):
         self.srv.verdicts[:] = ["NO - still apart."]
         out = self.run_engine(oc_cfg(self.srv.base, max_rounds=1))
+        self.assertIn("[Judge] 1 round only, no judgement will be given", out)
+        self.assertNotIn("[Judge:", out)
         self.assertIn("NO CONSENSUS (hit max rounds)", out)
 
     def test_missing_agent_warns_and_falls_back(self):
         self.srv.agent_names.clear()
         self.srv.verdicts[:] = ["YES - agree."]
-        out = self.run_engine(oc_cfg(self.srv.base))
+        out = self.run_engine(oc_cfg(self.srv.base, max_rounds=2))
         self.assertIn("[Warn] agent 'debater' not on", out)
         self.assertIn("Final status : CONSENSUS", out)
         self.assertIsNone(self.srv.msgs[0]["agent"])
 
     def test_judge_gets_isolated_session_without_judge_role(self):
         self.srv.verdicts[:] = ["YES - agree."]
-        self.run_engine(oc_cfg(self.srv.base, with_judge=False))
+        self.run_engine(oc_cfg(self.srv.base, with_judge=False, max_rounds=2))
         self.assertEqual(len({s["id"] for s in self.srv.sessions}), 3)
         judge_msgs = [m for m in self.srv.msgs
                       if m["system"].startswith("You are a neutral judge")]
@@ -102,7 +127,7 @@ class TestOpencodeEngine(QuietRunMixin, unittest.TestCase):
         for m in self.srv.msgs:
             self.assertRegex(m["messageID"],
                              rf"^msg_{m['sid'][4:16]}_t0_[0-9a-f]{{8}}$")
-        self.assertEqual(len(self.srv.msgs), 3)
+        self.assertEqual(len(self.srv.msgs), 2)  # round 1 is never judged
 
     def test_round2_message_id_differs_and_critic_reaches_proposer(self):
         # regression: st["sent"] was recorded before the agent's own turn was
@@ -178,9 +203,25 @@ class TestStatelessEngine(QuietRunMixin, unittest.TestCase):
     def test_temperature_defaults(self):
         srv = FakeServer()
         self.addCleanup(srv.stop)
-        out = self.run_engine(stateless_cfg(srv.base + "/v1/chat/completions"))
+        cfg = stateless_cfg(srv.base + "/v1/chat/completions")
+        cfg["max_rounds"] = 2
+        out = self.run_engine(cfg)
         self.assertIn("Final status : CONSENSUS", out)
-        self.assertEqual([p["temperature"] for p in srv.chats], [0.7, 0.7, 0.0])
+        self.assertEqual([p["temperature"] for p in srv.chats],
+                         [0.7, 0.7, 0.7, 0.7, 0.0])
+
+    def test_judge_fallback_still_uses_judge_temperature(self):
+        # without a judge role the judging call runs on the proposer's config,
+        # but it is still a judging call: temperature 0.0, not 0.7
+        srv = FakeServer()
+        self.addCleanup(srv.stop)
+        cfg = stateless_cfg(srv.base + "/v1/chat/completions")
+        cfg["max_rounds"] = 2
+        del cfg["agents"]["judge"]
+        out = self.run_engine(cfg)
+        self.assertIn("Final status : CONSENSUS", out)
+        self.assertEqual([p["temperature"] for p in srv.chats],
+                         [0.7, 0.7, 0.7, 0.7, 0.0])
 
 
 if __name__ == "__main__":

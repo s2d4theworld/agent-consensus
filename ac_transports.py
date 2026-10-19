@@ -11,6 +11,8 @@ import socket
 import time
 import urllib.error
 import urllib.request
+from email.utils import parsedate_to_datetime
+from math import ceil
 from typing import Any
 
 from ac_config import (
@@ -18,6 +20,7 @@ from ac_config import (
     AGENT_LIST_TTL,
     MESSAGE_ID_TPL,
     RETRY_500_WAITS,
+    RETRY_AFTER_MAX,
     RETRY_CONN_WAITS,
     RETRY_HTTP_CODES,
     RETRY_HTTP_WAITS,
@@ -50,6 +53,23 @@ def _retry_kind(code: int) -> str | None:
         return "server"
     return None
 
+def _retry_after(headers: Any) -> int | None:
+    # a server-provided Retry-After (delta-seconds or HTTP-date) wins over the
+    # policy table, but is capped so a broken or hostile value cannot stall
+    # the CLI; None = no usable hint, use the policy table
+    raw = ((headers.get("Retry-After") if headers else None) or "").strip()
+    if not raw:
+        return None
+    delay: float
+    try:
+        delay = int(raw)
+    except ValueError:
+        try:
+            delay = parsedate_to_datetime(raw).timestamp() - time.time()
+        except (TypeError, ValueError):
+            return None
+    return max(0, min(ceil(delay), RETRY_AFTER_MAX))
+
 def http_get_json(url: str, timeout: float) -> Any:
     with urllib.request.urlopen(url, timeout=timeout) as resp:
         return json.loads(resp.read().decode("utf-8"))
@@ -77,6 +97,9 @@ def post_json(url: str, payload: dict[str, Any],
             wait = _retry_wait(kind, attempt) if kind else None
             if wait is None:
                 raise TransportError(last_err) from e
+            server_wait = _retry_after(e.headers)
+            if server_wait is not None:
+                wait = server_wait
             print(f"    [retry {attempt+1}] {e.code}, waiting {wait}s...", flush=True)
             time.sleep(wait)
         except (TimeoutError, ConnectionError, urllib.error.URLError, socket.timeout) as e:
@@ -96,7 +119,10 @@ def strip_control_tokens(text: str) -> str:
 
 # ---------- Transport: OpenAI-compatible (stateless) ----------
 def chat_completion(agent_key: str, agent_cfg: AgentCfg, system_prompt: str,
-                    messages: list[dict[str, str]]) -> str:
+                    messages: list[dict[str, str]], role: str | None = None) -> str:
+    # role decides the default temperature: a judging call must stay
+    # deterministic even when it falls back to a debater's agent config
+    role = role or agent_key
     api_key = agent_cfg.get("api_key")
     if not api_key:
         env_name = f"CONSENSUS_API_KEY_{agent_key.upper()}"
@@ -110,7 +136,7 @@ def chat_completion(agent_key: str, agent_cfg: AgentCfg, system_prompt: str,
         "model": agent_cfg["model"],
         "messages": [{"role": "system", "content": system_prompt}] + messages,
         # the judge should be deterministic; debaters benefit from some variety
-        "temperature": agent_cfg.get("temperature", 0.0 if agent_key == ROLE_JUDGE else 0.7),
+        "temperature": agent_cfg.get("temperature", 0.0 if role == ROLE_JUDGE else 0.7),
     }
     data = post_json(
         agent_cfg["api_url"],
@@ -119,7 +145,10 @@ def chat_completion(agent_key: str, agent_cfg: AgentCfg, system_prompt: str,
     )
     msg = data["choices"][0]["message"]
     content = msg.get("content") or msg.get("reasoning_content") or ""
-    return strip_control_tokens(content)
+    content = strip_control_tokens(content)
+    if not content:
+        raise TransportError(f"empty response from model '{agent_cfg['model']}'")
+    return content
 
 # ---------- Transport: opencode serve (stateful sessions) ----------
 def oc_base_url(agent_cfg: AgentCfg) -> str:
@@ -167,7 +196,10 @@ def oc_send(agent_cfg: AgentCfg, session_id: str, system_prompt: str, text: str,
     out = "\n".join(p.get("text", "") for p in parts if p.get("type") == "text").strip()
     if not out:
         out = "\n".join(p.get("text", "") for p in parts if p.get("type") == "reasoning").strip()
-    return strip_control_tokens(out)
+    out = strip_control_tokens(out)
+    if not out:
+        raise TransportError(f"opencode: empty response from model '{agent_cfg['model']}'")
+    return out
 
 def oc_delete_url(base_url: str, session_id: str) -> None:
     try:

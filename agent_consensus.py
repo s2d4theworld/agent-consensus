@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # agent-consensus — Proposer vs Critic debate until they reach consensus,
-# judged each round by a neutral judge. Python stdlib only.
+# judged from round 2 by a neutral judge. Python stdlib only.
 #
 # The code lives in sibling modules:
 #   ac_errors.py     — shared exception types
@@ -62,7 +62,7 @@ def run_wizard() -> None:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="agent_consensus",
-        description="Proposer vs Critic debate until consensus, judged each round.")
+        description="Proposer vs Critic debate until consensus, judged from round 2.")
     parser.add_argument(
         "command", nargs="?", default="chat",
         help="chat = interactive menu (default), setup = configure, "
@@ -90,8 +90,6 @@ def menu() -> None:
         if choice == "1":
             run_wizard()
         elif choice == "2":
-            cfg = load_config()
-            err = validate_config(cfg) if cfg else None
             if not cfg or err:
                 print(f"  Cannot start: {err or 'no config'}. Run setup first.")
             else:

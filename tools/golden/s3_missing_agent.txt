@@ -1,7 +1,7 @@
 === STDOUT ===
 
   Topic: S3 topic
-  Max rounds: 1
+  Max rounds: 2
 
   [Warn] agent 'debater' not on http://127.0.0.1:<P> - using the default agent without tools.
   [Warn] run: python agent_consensus.py install-agent, then restart opencode serve.
@@ -20,11 +20,23 @@ Proposer: I defend the topic.
   ===== [C] (opencode/x) =====
 Critic: I challenge the topic.
 
+  [Judge] skipped in round 1
+
+  [Round 2] P is thinking...
+
+  ===== [P] (opencode/x) =====
+Proposer: I defend the topic.
+
+  [Round 2] C is evaluating...
+
+  ===== [C] (opencode/x) =====
+Critic: I challenge the topic.
+
   [Judge: J (opencode/x)] YES - agree.
 
 ============================================================
   Final status : CONSENSUS
-  Duration     : <N> sec, 1 rounds
+  Duration     : <N> sec, 2 rounds
   Transcript   : <TMP>/transcripts/discussion_<TS>.txt
 ============================================================
 === EXC ===
@@ -42,6 +54,13 @@ Proposer: I defend the topic.
 [C]
 Critic: I challenge the topic.
 
+--- Round 2 ---
+[P]
+Proposer: I defend the topic.
+
+[C]
+Critic: I challenge the topic.
+
 ============================================================
 STATUS: CONSENSUS
 JUDGE NOTE: YES - agree.
@@ -49,4 +68,4 @@ DURATION: <N>s
 === REC ===
 sessions: ['agent-consensus proposer <TS>', 'agent-consensus critic <TS>', 'agent-consensus judge <TS>']
 deletes: 3
-msgs: [('ses_fake0001test2018', 'msg_fake0001test_t0_d4854bd5', None, 'Discussion topic: S3 topic\nStart the discussion now.'), ('ses_fake0002test2018', 'msg_fake0002test_t0_53bf9522', None, 'Discussion topic: S3 topic\nStart the discussion now.\n\n[P]: Proposer: I defend the topic.'), ('ses_fake0003test2018', 'msg_fake0003test_t0_cc0716cb', None, 'TOPIC: S3 topic\n\nHere is the transcript:\n\n[P]:\nProposer: I defend the topic.\n\n[C]:\nCritic: I challenge the topic.')]
+msgs: [('ses_fake0001test2018', 'msg_fake0001test_t0_d4854bd5', None, 'Discussion topic: S3 topic\nStart the discussion now.'), ('ses_fake0002test2018', 'msg_fake0002test_t0_53bf9522', None, 'Discussion topic: S3 topic\nStart the discussion now.\n\n[P]: Proposer: I defend the topic.'), ('ses_fake0001test2018', 'msg_fake0001test_t1_c51a9e42', None, '[C]: Critic: I challenge the topic.'), ('ses_fake0002test2018', 'msg_fake0002test_t2_7c02e652', None, '[P]: Proposer: I defend the topic.'), ('ses_fake0003test2018', 'msg_fake0003test_t0_30797672', None, 'TOPIC: S3 topic\n\nHere is the transcript:\n\n[P]:\nProposer: I defend the topic.\n\n[C]:\nCritic: I challenge the topic.\n\n[P]:\nProposer: I defend the topic.\n\n[C]:\nCritic: I challenge the topic.')]

@@ -42,6 +42,7 @@ class Turn(NamedTuple):
     # one recorded debate turn
     key: str
     name: str
+    model: str
     text: str
 
 Turns = list[Turn]
@@ -58,16 +59,11 @@ JUDGE_SYSTEM = (
 )
 
 def parse_verdict(out: str) -> bool:
-    # judge is told to START with YES/NO: prefer the leading token,
-    # fall back to the first YES/NO word anywhere
+    # judge is told to START with YES/NO; otherwise use the first whole-word
+    # YES/NO anywhere in the answer (\b keeps "NOtable"/"YESmen" out)
     t = out.strip().upper()
-    m = re.match(r"[^A-Z]*(YES|NO)\b", t)
-    if m:
-        return m.group(1) == "YES"
-    m = re.search(r"\b(YES|NO)\b", t)
-    if m:
-        return m.group(1) == "YES"
-    return False
+    m = re.match(r"[^A-Z]*(YES|NO)\b", t) or re.search(r"\b(YES|NO)\b", t)
+    return bool(m and m.group(1) == "YES")
 
 def check_consensus(cfg: Config, topic: str, transcript: str,
                     judge_key: str) -> tuple[bool, str]:
@@ -75,7 +71,8 @@ def check_consensus(cfg: Config, topic: str, transcript: str,
     judge_msgs = [
         {"role": "user", "content": f"TOPIC: {topic}\n\nHere is the transcript:\n\n{transcript}"}
     ]
-    out = chat_completion(judge_key, judge_cfg, JUDGE_SYSTEM, judge_msgs)
+    out = chat_completion(judge_key, judge_cfg, JUDGE_SYSTEM, judge_msgs,
+                          role=ROLE_JUDGE)
     return parse_verdict(out), out
 
 # ---------- Discussion engine ----------
@@ -194,7 +191,11 @@ class OpencodeSessions:
         self.cfg = cfg
         self.state: dict[str, SessionState] = {}
 
-    def ensure(self, sess_key: str, cfg_key: str, title: str) -> SessionState:
+    def ensure(self, sess_key: str, title: str,
+               cfg_key: str | None = None) -> SessionState:
+        # cfg_key is only needed when the session role differs from the agent
+        # config it runs on (the judge falling back to a debater's config)
+        cfg_key = cfg_key or sess_key
         st = self.state.setdefault(sess_key, {"id": "", "started": False,
                                               "sent": 0, "cfg_key": cfg_key})
         if not st["id"]:
@@ -202,11 +203,13 @@ class OpencodeSessions:
         return st
 
     def mark_seen(self, sess_key: str, turns_seen: int) -> None:
-        # the single place the cursor moves: it must count every recorded
-        # turn, including the agent's own (its session already holds it as
-        # the assistant message); stateless roles have no session -> no-op
+        # the single place the session state moves: a recorded turn means the
+        # session saw the exchange (started) and the cursor counts every turn,
+        # including the agent's own (its session already holds it as the
+        # assistant message); stateless roles have no session -> no-op
         st = self.state.get(sess_key)
         if st is not None:
+            st["started"] = True
             st["sent"] = turns_seen
 
     def close_all(self) -> None:
@@ -215,9 +218,9 @@ class OpencodeSessions:
                 oc_delete(self.cfg["agents"][st["cfg_key"]], st["id"])
         self.state.clear()
 
-def _print_turn(name: str, model: str, text: str) -> None:
-    print(f"\n  ===== [{name}] ({model}) =====")
-    print(text)
+def _print_turn(turn: Turn) -> None:
+    print(f"\n  ===== [{turn.name}] ({turn.model}) =====")
+    print(turn.text)
     print()
 
 class Discussion:
@@ -253,9 +256,9 @@ class Discussion:
         transports = sorted({transport_of(a)
                              for a in (self.proposer, self.critic, self.judge)})
         print(f"  [Transport] {', '.join(transports)}\n")
-        with open(self.path, "w", encoding="utf-8") as tf:
-            tf.write(f"TOPIC: {self.topic}\nSTART: {time.ctime()}\n")
-            tf.write(f"JUDGE: {self.judge['name']} ({self.judge['model']})\n{'='*60}\n\n")
+        header = (f"TOPIC: {self.topic}\nSTART: {time.ctime()}\n"
+                  f"JUDGE: {self.judge['name']} ({self.judge['model']})\n{'='*60}\n\n")
+        self._write_transcript(header, mode="w")
 
     def full_view(self, agent_key: str) -> list[dict[str, str]]:
         # stateless transport view: own turns = assistant, opponent = user
@@ -272,7 +275,7 @@ class Discussion:
         if not is_opencode(a):
             return chat_completion(key, a, sys_prompt, self.full_view(key))
         # stateful: send only the turns this session hasn't seen yet
-        st = self.sessions.ensure(key, key, f"{SESSION_TITLE_PREFIX}{key} {self.ts}")
+        st = self.sessions.ensure(key, f"{SESSION_TITLE_PREFIX}{key} {self.ts}")
         parts = []
         if not st["started"]:
             parts.append(self.initial_msg)
@@ -281,17 +284,18 @@ class Discussion:
                 parts.append(f"[{turn.name}]: {turn.text}")
         out = oc_send(a, st["id"], sys_prompt, "\n\n".join(parts),
                       agent_name=self.agent_eff.get(key), turn_index=st["sent"])
-        st["started"] = True
         return out
 
-    def take_turn(self, key: str, sys_prompt: str) -> str:
+    def take_turn(self, key: str, sys_prompt: str) -> Turn:
         # a debater turn: send, then record it and advance the session cursor
         # together - recording first means the cursor naturally counts the
         # agent's own turn, so the next send carries exactly the new reply
+        a = self.cfg["agents"][key]
         text = self._request_turn(key, sys_prompt)
-        self.turns.append(Turn(key, self.cfg["agents"][key]["name"], text))
+        turn = Turn(key, a["name"], a["model"], text)
+        self.turns.append(turn)
         self.sessions.mark_seen(key, len(self.turns))
-        return text
+        return turn
 
     def judge_now(self) -> tuple[bool, str]:
         # stateless: full transcript each round. stateful: first call = full
@@ -299,8 +303,8 @@ class Discussion:
         if not is_opencode(self.cfg["agents"][self.judge_key]):
             return check_consensus(self.cfg, self.topic, format_transcript(self.turns),
                                    self.judge_key)
-        st = self.sessions.ensure(ROLE_JUDGE, self.judge_key,
-                                  f"{SESSION_TITLE_PREFIX}judge {self.ts}")
+        st = self.sessions.ensure(ROLE_JUDGE, f"{SESSION_TITLE_PREFIX}judge {self.ts}",
+                                  cfg_key=self.judge_key)
         if not st["started"]:
             text = (f"TOPIC: {self.topic}\n\nHere is the transcript:\n\n"
                     f"{format_transcript(self.turns)}")
@@ -309,64 +313,98 @@ class Discussion:
         out = oc_send(self.judge, st["id"], JUDGE_SYSTEM, text,
                       agent_name=self.agent_eff.get(self.judge_key),
                       turn_index=st["sent"])
-        st["started"] = True
         self.sessions.mark_seen(ROLE_JUDGE, len(self.turns))
         return parse_verdict(out), out
 
-    def run(self) -> tuple[bool, int, str]:
-        # the round loop; returns (consensus, rounds_done, judge_note)
+    def run(self) -> None:
+        # the whole run: round loop + exactly one summary/footer, whether it
+        # ends normally or aborts mid-round (completed turns are already in the
+        # transcript by then). Sessions are always closed on the way out.
         consensus = False
         rounds_done = 0
         judge_note = ""
         try:
             for rnd in range(1, self.max_rounds + 1):
                 rounds_done = rnd
+                self._start_round(rnd)
+
                 print(f"  [Round {rnd}] {self.proposer['name']} is thinking...", flush=True)
-                a_text = self.take_turn(ROLE_PROPOSER, self.proposer_sys)
-                _print_turn(self.proposer["name"], self.proposer["model"], a_text)
+                self._debate_turn(ROLE_PROPOSER, self.proposer_sys)
 
                 print(f"  [Round {rnd}] {self.critic['name']} is evaluating...", flush=True)
-                b_text = self.take_turn(ROLE_CRITIC, self.critic_sys)
-                _print_turn(self.critic["name"], self.critic["model"], b_text)
+                self._debate_turn(ROLE_CRITIC, self.critic_sys)
 
-                self._append_round(rnd, a_text, b_text)
-
-                # check consensus (round 1: opening positions can't be consensus yet)
-                if rnd == 1 and self.max_rounds > 1:
-                    print("  [Judge] skipped in round 1\n")
-                else:
-                    try:
-                        ok, note = self.judge_now()
-                        judge_note = note
-                        print(f"  [Judge: {self.judge['name']} "
-                              f"({self.judge['model']})] {note}\n")
-                        if ok:
-                            consensus = True
-                            break
-                    except Exception as e:
-                        print(f"  [Judge] failed to evaluate: {e}\n")
+                ok, note = self._judge_round(rnd)
+                if note is not None:
+                    judge_note = note
+                if ok:
+                    consensus = True
+                    break
+        except BaseException as e:
+            try:
+                self.finish(False, rounds_done, judge_note,
+                            aborted=f"{type(e).__name__}: {e}")
+            except Exception:
+                pass  # never mask the original failure
+            raise
+        else:
+            self.finish(consensus, rounds_done, judge_note)
         finally:
             self.sessions.close_all()
-        return consensus, rounds_done, judge_note
 
-    def finish(self, consensus: bool, rounds_done: int, judge_note: str) -> None:
+    def _debate_turn(self, key: str, sys_prompt: str) -> None:
+        # one debater turn: send, record, show; take_turn keeps the bookkeeping
+        turn = self.take_turn(key, sys_prompt)
+        self._append_turn(turn)
+        _print_turn(turn)
+
+    def _judge_round(self, rnd: int) -> tuple[bool, str | None]:
+        # round 1 is opening positions only: there is nothing to judge yet,
+        # so even a 1-round run is never judged. None = no verdict this round
+        # (skipped or failed): the previous note stays in place.
+        if rnd == 1:
+            if self.max_rounds == 1:
+                print("  [Judge] 1 round only, no judgement will be given\n")
+            else:
+                print("  [Judge] skipped in round 1\n")
+            return False, None
+        try:
+            ok, note = self.judge_now()
+        except Exception as e:
+            print(f"  [Judge] failed to evaluate: {e}\n")
+            return False, None
+        print(f"  [Judge: {self.judge['name']} "
+              f"({self.judge['model']})] {note}\n")
+        return ok, note
+
+    def finish(self, consensus: bool, rounds_done: int, judge_note: str,
+               aborted: str | None = None) -> None:
         # final summary on screen + transcript footer
         elapsed = time.time() - self.started_at
-        status = "CONSENSUS" if consensus else "NO CONSENSUS (hit max rounds)"
+        status = "ABORTED" if aborted else (
+            "CONSENSUS" if consensus else "NO CONSENSUS (hit max rounds)")
         print("=" * 60)
         print(f"  Final status : {status}")
         print(f"  Duration     : {elapsed:.0f} sec, {rounds_done} rounds")
         print(f"  Transcript   : {self.path}")
         print("=" * 60)
-        with open(self.path, "a", encoding="utf-8") as tf:
-            tf.write(f"{'='*60}\nSTATUS: {status}\n")
-            tf.write(f"JUDGE NOTE: {judge_note}\nDURATION: {elapsed:.0f}s\n")
+        footer = (f"{'='*60}\nSTATUS: {status}\n"
+                  f"JUDGE NOTE: {judge_note}\nDURATION: {elapsed:.0f}s\n")
+        if aborted:
+            footer += f"ABORTED: {aborted}\n"
+        self._write_transcript(footer)
 
-    def _append_round(self, rnd: int, a_text: str, b_text: str) -> None:
-        with open(self.path, "a", encoding="utf-8") as tf:
-            tf.write(f"--- Round {rnd} ---\n")
-            tf.write(f"[{self.proposer['name']}]\n{a_text}\n\n")
-            tf.write(f"[{self.critic['name']}]\n{b_text}\n\n")
+    def _write_transcript(self, text: str, mode: str = "a") -> None:
+        # single writer: encoding and the append-only rule (a turn is durable
+        # as soon as it completes) live in one place
+        with open(self.path, mode, encoding="utf-8") as tf:
+            tf.write(text)
+
+    def _start_round(self, rnd: int) -> None:
+        self._write_transcript(f"--- Round {rnd} ---\n")
+
+    def _append_turn(self, turn: Turn) -> None:
+        self._write_transcript(f"[{turn.name}]\n{turn.text}\n\n")
 
 def run_discussion(cfg: Config, topic: str | None = None) -> None:
     os.makedirs(ac_config.TRANSCRIPT_DIR, exist_ok=True)
@@ -385,8 +423,7 @@ def run_discussion(cfg: Config, topic: str | None = None) -> None:
 
     d = Discussion(cfg, topic, max_rounds, available)
     d.start()
-    consensus, rounds_done, judge_note = d.run()
-    d.finish(consensus, rounds_done, judge_note)
+    d.run()
 
     if prompted:
         try:

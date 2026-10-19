@@ -67,14 +67,14 @@ def s1_consensus_round3(ctx):
 @scenario
 def s2_no_consensus(ctx):
     ctx.srv.verdicts[:] = ["NO - still far apart."]
-    run_discussion(oc_cfg(ctx.srv.base, max_rounds=1), topic="S2 topic")
+    run_discussion(oc_cfg(ctx.srv.base, max_rounds=2), topic="S2 topic")
 
 
 @scenario
 def s3_missing_agent(ctx):
     ctx.srv.agent_names.clear()
     ctx.srv.verdicts[:] = ["YES - agree."]
-    run_discussion(oc_cfg(ctx.srv.base, max_rounds=1), topic="S3 topic")
+    run_discussion(oc_cfg(ctx.srv.base, max_rounds=2), topic="S3 topic")
 
 
 @scenario
@@ -86,7 +86,7 @@ def s4_unreachable(_ctx):
 @scenario
 def s5_no_judge(ctx):
     ctx.srv.verdicts[:] = ["YES - agree."]
-    run_discussion(oc_cfg(ctx.srv.base, with_judge=False, max_rounds=1),
+    run_discussion(oc_cfg(ctx.srv.base, with_judge=False, max_rounds=2),
                    topic="S5 topic")
 
 

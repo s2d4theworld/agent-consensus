@@ -1,7 +1,7 @@
 # agent-consensus
 
 CLI that makes two LLM agents (proposer vs critic) debate a topic until
-they reach consensus, with a neutral judge scoring each round.
+they reach consensus, with a neutral judge scoring from round 2.
 
 ## Transports
 
@@ -35,9 +35,10 @@ server), re-run `setup` and configure a model your server currently offers.
 
 Model format is `provider/model` from the local server. Each role gets its
 own session (`agent-consensus <role> <timestamp>`), deleted when the run
-ends; orphans from crashed runs are swept at the next start. The judge is
-skipped in round 1 (opening positions can't be consensus yet) and its
-session starts with the full transcript at round 2.
+ends; orphans from crashed runs are swept at the next start. Round 1 is
+never judged: opening positions can't be consensus yet, and the judge's
+session starts with the full transcript at round 2. A `max_rounds` of 1
+therefore ends unjudged with no consensus.
 
 ### Web search for debaters (optional `agent` field)
 
@@ -82,8 +83,8 @@ Notes from testing the serve API:
 
 1. `python agent_consensus.py setup`
 2. `python agent_consensus.py` — pick `[2] Start discussion` and type a
-   topic; proposer and critic take turns debating; the judge scores each
-   round until consensus / max rounds (`max_rounds` in config.json).
+   topic; proposer and critic take turns debating; the judge scores from
+   round 2 until consensus / max rounds (`max_rounds` in config.json).
 3. Transcripts are saved to `transcripts/discussion_<timestamp>.txt`.
 
 ## openai transport (optional)

@@ -21,7 +21,7 @@ from ac_transports import oc_agent_list_cached, oc_base_url
 ROLE_DESCRIPTIONS: dict[str, str] = {
     ROLE_PROPOSER: "Proposer (put forward positions & arguments)",
     ROLE_CRITIC: "Critic (evaluate, find gaps, agree/disagree)",
-    ROLE_JUDGE: "Judge (neutral — score consensus each round)",
+    ROLE_JUDGE: "Judge (neutral — score consensus from round 2)",
 }
 DEFAULT_NAMES: dict[str, str] = {
     ROLE_PROPOSER: "Proposer",

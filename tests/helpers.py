@@ -37,11 +37,13 @@ class _FakeHandler(BaseHTTPRequestHandler):
     def log_message(self, *a):
         pass
 
-    def _json(self, obj, code=200):
+    def _json(self, obj, code=200, headers=None):
         body = json.dumps(obj).encode("utf-8")
         self.send_response(code)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
+        for name, value in (headers or {}).items():
+            self.send_header(name, value)
         self.end_headers()
         self.wfile.write(body)
 
@@ -59,50 +61,61 @@ class _FakeHandler(BaseHTTPRequestHandler):
         n = int(self.headers.get("Content-Length", 0))
         payload = json.loads(self.rfile.read(n).decode("utf-8")) if n else {}
         if srv.retry_codes:
-            self._json({}, srv.retry_codes.pop(0))
+            retry_headers = ({"Retry-After": srv.retry_after}
+                             if srv.retry_after is not None else None)
+            self._json({}, srv.retry_codes.pop(0), retry_headers)
+        elif self.path == "/session":
+            self._handle_session(srv, payload)
+        elif self.path.endswith("/message"):
+            self._handle_message(srv, payload)
+        elif self.path.endswith("/v1/chat/completions"):
+            self._handle_chat(srv, payload)
+        else:
+            self._json({}, 404)
+
+    def _handle_session(self, srv, payload):
+        srv._counter += 1
+        sid = f"ses_fake{srv._counter:04d}test2018"
+        srv.sessions.append({"id": sid, "title": payload.get("title")})
+        self._json({"id": sid})
+
+    def _handle_message(self, srv, payload):
+        if srv.message_error:
+            self._json({"info": {"error": srv.message_error}, "parts": []})
             return
-        if self.path == "/session":
-            srv._counter += 1
-            sid = f"ses_fake{srv._counter:04d}test2018"
-            srv.sessions.append({"id": sid, "title": payload.get("title")})
-            self._json({"id": sid})
+        sid = self.path.split("/session/")[1].split("/")[0]
+        mid = payload.get("messageID")
+        hit = srv.responses.get((sid, mid)) if mid else None
+        if hit is not None:
+            # emulate the server dedupe: replay the stored answer;
+            # a queued verdict must not be consumed twice
+            srv.dupes.append({"sid": sid, "messageID": mid})
+            self._json(hit)
             return
-        if self.path.endswith("/message"):
-            if srv.message_error:
-                self._json({"info": {"error": srv.message_error}, "parts": []})
-                return
-            sid = self.path.split("/session/")[1].split("/")[0]
-            mid = payload.get("messageID")
-            hit = srv.responses.get((sid, mid)) if mid else None
-            if hit is not None:
-                # emulate the server dedupe: replay the stored answer;
-                # a queued verdict must not be consumed twice
-                srv.dupes.append({"sid": sid, "messageID": mid})
-                self._json(hit)
-                return
-            sys_p = payload.get("system", "")
-            if sys_p.startswith("You are a neutral judge"):
-                text = srv.verdicts.pop(0) if srv.verdicts else "NO - no verdict queued."
-            elif "PROPOSER" in sys_p:
-                text = "Proposer: I defend the topic."
-            else:
-                text = "Critic: I challenge the topic."
-            srv.msgs.append({"sid": sid,
-                             "messageID": mid,
-                             "agent": payload.get("agent"),
-                             "system": sys_p,
-                             "text": payload["parts"][0]["text"]})
-            envelope = {"info": {"id": "m1"},
-                        "parts": [{"type": "text", "text": text}]}
-            if mid:
-                srv.responses[(sid, mid)] = envelope
-            self._json(envelope)
-            return
-        if self.path.endswith("/v1/chat/completions"):
-            srv.chats.append(payload)
-            self._json({"choices": [{"message": {"content": "YES - agree"}}]})
-            return
-        self._json({}, 404)
+        sys_p = payload.get("system", "")
+        if srv.reply_override is not None:
+            text = srv.reply_override
+        elif sys_p.startswith("You are a neutral judge"):
+            text = srv.verdicts.pop(0) if srv.verdicts else "NO - no verdict queued."
+        elif "PROPOSER" in sys_p:
+            text = "Proposer: I defend the topic."
+        else:
+            text = "Critic: I challenge the topic."
+        srv.msgs.append({"sid": sid,
+                         "messageID": mid,
+                         "agent": payload.get("agent"),
+                         "system": sys_p,
+                         "text": payload["parts"][0]["text"]})
+        envelope = {"info": {"id": "m1"},
+                    "parts": [{"type": "text", "text": text}]}
+        if mid:
+            srv.responses[(sid, mid)] = envelope
+        self._json(envelope)
+
+    def _handle_chat(self, srv, payload):
+        srv.chats.append(payload)
+        content = srv.reply_override if srv.reply_override is not None else "YES - agree"
+        self._json({"choices": [{"message": {"content": content}}]})
 
     def do_DELETE(self):
         srv = self.srv
@@ -133,7 +146,9 @@ class FakeServer:
         self.deletes: list[str] = []
         self.chats: list[dict] = []
         self.retry_codes: list[int] = []    # status codes to fail the next POSTs with
+        self.retry_after: str | None = None  # Retry-After sent with those failures
         self.message_error: dict | None = None  # set: /message returns this envelope
+        self.reply_override: str | None = None  # set: all model replies use this text
         self._counter = 0
         self.httpd = _FakeHTTPServer(self)
         threading.Thread(target=self.httpd.serve_forever, daemon=True).start()

@@ -58,6 +58,26 @@ class TestTransports(unittest.TestCase):
                 ac_transports.post_json(srv.base + "/session", {}, timeout=5)
         fake_time.sleep.assert_called_once_with(15)
 
+    def test_post_json_honors_retry_after(self):
+        srv = FakeServer()
+        self.addCleanup(srv.stop)
+        srv.retry_codes.append(429)
+        srv.retry_after = "7"
+        with mock.patch.object(ac_transports, "time") as fake_time:
+            ac_transports.post_json(srv.base + "/session", {"title": "t"}, timeout=5)
+        fake_time.sleep.assert_called_once_with(7)
+
+    def test_retry_after_parsing_and_cap(self):
+        stamp = time.strftime("%a, %d %b %Y %H:%M:%S GMT", time.gmtime(1_700_000_030))
+        with mock.patch.object(ac_transports, "time") as fake_time:
+            fake_time.time.return_value = 1_700_000_000.0
+            self.assertEqual(ac_transports._retry_after({"Retry-After": stamp}), 30)
+        self.assertEqual(ac_transports._retry_after({"Retry-After": "999999"}),
+                         ac_config.RETRY_AFTER_MAX)
+        self.assertIsNone(ac_transports._retry_after({"Retry-After": "soon"}))
+        self.assertIsNone(ac_transports._retry_after({}))
+        self.assertIsNone(ac_transports._retry_after(None))
+
     def test_post_json_does_not_retry_client_error(self):
         srv = FakeServer()
         self.addCleanup(srv.stop)
@@ -108,6 +128,20 @@ class TestTransports(unittest.TestCase):
         agent = oc_cfg(srv.base)["agents"]["proposer"]
         with self.assertRaisesRegex(TransportError, "opencode: boom"):
             ac_transports.oc_send(agent, "ses_fake0001test2018", "sys", "text", turn_index=0)
+
+    def test_empty_model_reply_is_an_error(self):
+        # empty output must fail loudly instead of becoming a silent blank turn
+        srv = FakeServer()
+        self.addCleanup(srv.stop)
+        srv.reply_override = ""
+        agent = oc_cfg(srv.base)["agents"]["proposer"]
+        with self.assertRaisesRegex(TransportError, "empty response"):
+            ac_transports.oc_send(agent, "ses_fake0001test2018", "sys", "text", turn_index=0)
+        chat_agent: ac_config.AgentCfg = {
+            "name": "X", "transport": "openai", "api_key": "k", "model": "m",
+            "api_url": srv.base + "/v1/chat/completions"}
+        with self.assertRaisesRegex(TransportError, "empty response"):
+            ac_transports.chat_completion("proposer", chat_agent, "sys", [])
 
     def test_oc_send_message_id_is_content_derived(self):
         # identical resend (lost-response retry) -> replayed by the server;

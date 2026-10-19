@@ -16,7 +16,7 @@
     Display name    Server URL    Restricted agent ('-' = none; 'debater' = websearch only)    Model
   --- Agent: Critic (evaluate, find gaps, agree/disagree) ---
     Display name    Server URL    Restricted agent ('-' = none; 'debater' = websearch only)    Model
-  --- Agent: Judge (neutral — score consensus each round) ---
+  --- Agent: Judge (neutral — score consensus from round 2) ---
     Display name    Server URL    Restricted agent ('-' = none; 'debater' = websearch only)    Model
     Max discussion rounds  Config saved: <TMP>/config.json
   Websearch agent installed: <TMP>/agents/debater.md
