@@ -28,6 +28,7 @@ GOLDEN_DIR = os.path.join(TOOLS_DIR, "golden")
 sys.path.insert(0, os.path.join(ROOT, "tests"))
 from helpers import (
     FakeServer,
+    WIZARD_STDIN_OPENCODE,
     captured_stdout,
     fake_argv,
     fake_stdin,
@@ -105,9 +106,7 @@ def s6_menu(ctx):
 
 @scenario
 def s7_wizard_opencode(ctx):
-    # 12 blank answers (4 prompts x 3 roles) + transport + the trailing "3"
-    # which is the max_rounds answer, not a menu quit
-    with fake_stdin("opencode\n" + "\n" * 12 + "3\n"):
+    with fake_stdin(WIZARD_STDIN_OPENCODE):
         ac_ui.setup_wizard()
     with open(ctx.config_path, "r", encoding="utf-8") as f:
         print("CONFIG:", json.dumps(json.load(f), sort_keys=True))

@@ -1,14 +1,12 @@
 # Tests for ac_config: transport selection and config validation.
 import json
 import os
-import shutil
-import tempfile
 import unittest
 from typing import Any, cast
 from unittest import mock
 
 import ac_config
-from helpers import captured_stdout, oc_cfg, patched_attrs
+from helpers import captured_stdout, oc_cfg, patched_attrs, temp_dir
 from ac_config import (
     DEFAULT_MAX_ROUNDS,
     DEFAULT_TEMPERATURE_DEBATER,
@@ -30,8 +28,7 @@ from ac_config import (
 
 class TestAgentInstaller(unittest.TestCase):
     def setUp(self):
-        self.tdir = tempfile.mkdtemp(prefix="ac_agent_")
-        self.addCleanup(shutil.rmtree, self.tdir, ignore_errors=True)
+        self.tdir = self.enterContext(temp_dir())
         self.src = os.path.join(self.tdir, "debater.md")
         with open(self.src, "w", encoding="utf-8") as f:
             f.write("# agent\n")
@@ -152,12 +149,12 @@ class TestConfig(unittest.TestCase):
     def test_load_config_tolerates_utf8_bom(self):
         # a Windows editor may save a hand-edited config.json with a BOM;
         # it must not read as broken
-        with tempfile.TemporaryDirectory() as tdir:
-            path = os.path.join(tdir, "config.json")
-            with open(path, "w", encoding="utf-8-sig") as f:
-                json.dump(oc_cfg("http://x"), f)
-            with mock.patch.object(ac_config, "CONFIG_PATH", path):
-                cfg = ac_config.load_config()
+        tdir = self.enterContext(temp_dir())
+        path = os.path.join(tdir, "config.json")
+        with open(path, "w", encoding="utf-8-sig") as f:
+            json.dump(oc_cfg("http://x"), f)
+        with mock.patch.object(ac_config, "CONFIG_PATH", path):
+            cfg = ac_config.load_config()
         self.assertIsNotNone(cfg)
         self.assertIn("agents", cfg or {})
 
@@ -169,28 +166,28 @@ class TestConfig(unittest.TestCase):
 
     def test_save_config_keeps_previous_config_on_failure(self):
         # the atomic replace must not touch the old file when the write fails
-        with tempfile.TemporaryDirectory() as tdir:
-            path = os.path.join(tdir, "config.json")
-            with open(path, "w", encoding="utf-8") as f:
-                f.write('{"old": true}')
-            with mock.patch.object(ac_config, "CONFIG_PATH", path), \
-                    mock.patch.object(ac_config.json, "dump",
-                                      side_effect=OSError("disk full")), \
-                    captured_stdout():
-                self.assertFalse(save_config(oc_cfg("http://x")))
-            with open(path, "r", encoding="utf-8") as f:
-                self.assertEqual(json.load(f), {"old": True})
-            self.assertFalse(os.path.exists(path + ".tmp"))
+        tdir = self.enterContext(temp_dir())
+        path = os.path.join(tdir, "config.json")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write('{"old": true}')
+        with mock.patch.object(ac_config, "CONFIG_PATH", path), \
+                mock.patch.object(ac_config.json, "dump",
+                                  side_effect=OSError("disk full")), \
+                captured_stdout():
+            self.assertFalse(save_config(oc_cfg("http://x")))
+        with open(path, "r", encoding="utf-8") as f:
+            self.assertEqual(json.load(f), {"old": True})
+        self.assertFalse(os.path.exists(path + ".tmp"))
 
     def test_save_config_reports_non_serializable_config(self):
         # the bool contract holds for any config, not just OSError paths
-        with tempfile.TemporaryDirectory() as tdir:
-            path = os.path.join(tdir, "config.json")
-            with mock.patch.object(ac_config, "CONFIG_PATH", path), \
-                    captured_stdout() as out:
-                self.assertFalse(save_config(cast(Any, {"agents": {1, 2}})))
-            self.assertIn("cannot save", out.getvalue())
-            self.assertFalse(os.path.exists(path))
+        tdir = self.enterContext(temp_dir())
+        path = os.path.join(tdir, "config.json")
+        with mock.patch.object(ac_config, "CONFIG_PATH", path), \
+                captured_stdout() as out:
+            self.assertFalse(save_config(cast(Any, {"agents": {1, 2}})))
+        self.assertIn("cannot save", out.getvalue())
+        self.assertFalse(os.path.exists(path))
 
     def test_temperature_validation(self):
         cases: list[tuple[Any, bool]] = [

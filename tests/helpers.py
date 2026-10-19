@@ -5,7 +5,6 @@ import contextlib
 import io
 import json
 import os
-import shutil
 import socket
 import sys
 import tempfile
@@ -60,6 +59,19 @@ def captured_stdout():
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):
         yield buf
+
+
+@contextlib.contextmanager
+def temp_dir():
+    # a self-deleting scratch directory; pair with enterContext or with
+    with tempfile.TemporaryDirectory() as path:
+        yield path
+
+
+# setup-wizard stdin scripts: transport, then a blank answer for every prompt
+# (defaults), then the max_rounds answer "3" (not a menu quit)
+WIZARD_STDIN_OPENCODE = "opencode\n" + "\n" * 12 + "3\n"
+WIZARD_STDIN_OPENAI = "openai\n" + "\n" * 5 * 3 + "3\n"
 
 
 class _FakeHandler(BaseHTTPRequestHandler):
@@ -243,8 +255,7 @@ def stateless_cfg(url):
 class QuietRunMixin(unittest.TestCase):
     # redirects the transcript dir and captures run_discussion output
     def setUp(self):
-        self._tdir = tempfile.mkdtemp(prefix="ac_test_")
-        self.addCleanup(shutil.rmtree, self._tdir, ignore_errors=True)
+        self._tdir = self.enterContext(temp_dir())
         # CONFIG_PATH is re-patched to its current value so cleanup restores
         # it even after tests point it at temp files
         self.enterContext(patched_attrs(

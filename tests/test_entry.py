@@ -3,10 +3,12 @@ import json
 import unittest
 from unittest import mock
 
+import ac_ui
 import agent_consensus
 from helpers import (
     FakeServerMixin,
     QuietRunMixin,
+    WIZARD_STDIN_OPENCODE,
     captured_stdout,
     fake_argv,
     fake_stdin,
@@ -53,6 +55,18 @@ class TestEntry(FakeServerMixin, QuietRunMixin, unittest.TestCase):
             agent_consensus.main()
         self.assertEqual(cm.exception.code, 1)
         self.assertIn("Setup aborted", out.getvalue())
+
+    def test_setup_succeeds_when_agent_install_fails(self):
+        # documented: the optional websearch-agent install may fail without
+        # failing setup - the config is saved and runs fall back to no tools
+        self.temp_config()
+        with mock.patch.object(ac_ui, "ensure_agent_installed",
+                               return_value=False) as install:
+            with fake_stdin(WIZARD_STDIN_OPENCODE), fake_argv("setup"), \
+                    captured_stdout() as out:
+                agent_consensus.main()  # returns: no SystemExit
+        install.assert_called_once_with()
+        self.assertIn("Config saved:", out.getvalue())
 
     def test_setup_save_failure_exits_1(self):
         with fake_argv("setup"), mock.patch.object(
