@@ -80,6 +80,10 @@ class TestOpencodeEngine(FakeServerMixin, QuietRunMixin, unittest.TestCase):
         self.srv.verdicts[:] = verdicts
         return self.run_engine(oc_cfg(self.srv.base, **cfg_kwargs))
 
+    def msgs_for(self, marker: str) -> list[dict]:
+        # sends whose system prompt identifies the role (PROPOSER/CRITIC/judge)
+        return [m for m in self.srv.msgs if marker in m["system"]]
+
     def test_consensus_after_two_rounds_and_cleanup(self):
         out = self.run_oc(["NO - not yet.", "YES - agreed."], max_rounds=3)
         self.assertIn("Final status : CONSENSUS", out)
@@ -170,12 +174,18 @@ class TestOpencodeEngine(FakeServerMixin, QuietRunMixin, unittest.TestCase):
         self.assertIn("Final status : CONSENSUS", out)
         self.assertIsNone(self.srv.msgs[0]["agent"])
 
+    def test_debater_agent_is_attached_to_sends(self):
+        # restricted (websearch) agents ride along on the debaters' calls;
+        # the judge has none configured and must send without one
+        self.run_oc(["YES - agree."], max_rounds=2)
+        self.assertEqual([m["agent"] for m in self.srv.msgs],
+                         ["debater", "debater", "debater", "debater", None])
+
     def test_judge_gets_isolated_session_without_judge_role(self):
         self.run_oc(["YES - agree."], with_judge=False, max_rounds=2)
         self.assertEqual(len({s["id"] for s in self.srv.sessions}), 3)
-        judge_msgs = [m for m in self.srv.msgs
-                      if m["system"].startswith("You are a neutral judge")]
-        prop_msgs = [m for m in self.srv.msgs if "PROPOSER" in m["system"]]
+        judge_msgs = self.msgs_for("neutral judge")
+        prop_msgs = self.msgs_for("PROPOSER")
         self.assertEqual(len(judge_msgs), 1)
         self.assertNotEqual(judge_msgs[0]["sid"], prop_msgs[0]["sid"])
 
@@ -191,7 +201,7 @@ class TestOpencodeEngine(FakeServerMixin, QuietRunMixin, unittest.TestCase):
         # appended, so round 2 reused the round-1 message id, the server
         # deduped it and the proposer replayed its opening verbatim
         self.run_oc(["YES - agreed."], max_rounds=2)
-        prop = [m for m in self.srv.msgs if "PROPOSER" in m["system"]]
+        prop = self.msgs_for("PROPOSER")
         self.assertEqual(len(prop), 2)
         sid = prop[0]["sid"][4:16]
         self.assertRegex(prop[0]["messageID"], rf"^msg_{sid}_t0_[0-9a-f]{{8}}$")
