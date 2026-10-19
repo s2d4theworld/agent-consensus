@@ -3,6 +3,7 @@
 #              the script only sends new messages)
 #   openai   = any OpenAI-compatible /v1/chat/completions endpoint (stateless:
 #              the script re-sends the full conversation each call)
+import hashlib
 import json
 import os
 import re
@@ -32,6 +33,23 @@ from ac_config import (
 from ac_errors import TransportError
 
 # ---------- HTTP helpers (retries + JSON) ----------
+RETRY_POLICY: dict[str, tuple[int, ...]] = {
+    "http": RETRY_HTTP_WAITS,   # 429/502/503: transient upstream errors
+    "server": RETRY_500_WAITS,  # 500: often deterministic, retry briefly
+    "conn": RETRY_CONN_WAITS,
+}
+
+def _retry_wait(kind: str, attempt: int) -> int | None:
+    waits = RETRY_POLICY[kind]
+    return waits[attempt] if attempt < len(waits) else None
+
+def _retry_kind(code: int) -> str | None:
+    if code in RETRY_HTTP_CODES:
+        return "http"
+    if code == 500:
+        return "server"
+    return None
+
 def http_get_json(url: str, timeout: float) -> Any:
     with urllib.request.urlopen(url, timeout=timeout) as resp:
         return json.loads(resp.read().decode("utf-8"))
@@ -45,7 +63,7 @@ def post_json(url: str, payload: dict[str, Any],
         headers={"Content-Type": "application/json", **(headers or {})},
         method="POST",
     )
-    attempts = max(len(RETRY_HTTP_WAITS), len(RETRY_CONN_WAITS)) + 1
+    attempts = max(len(waits) for waits in RETRY_POLICY.values()) + 1
     last_err: str | None = None
     for attempt in range(attempts):
         try:
@@ -55,21 +73,17 @@ def post_json(url: str, payload: dict[str, Any],
             body = e.read().decode("utf-8", "replace")[:500]
             e.close()  # release the response socket; body is already read
             last_err = f"HTTP {e.code}: {body}"
-            # transient upstream errors get the 45/90/135s backoff; a 500 is
-            # often deterministic, so retry it once, briefly
-            if e.code in RETRY_HTTP_CODES and attempt < len(RETRY_HTTP_WAITS):
-                wait = RETRY_HTTP_WAITS[attempt]
-            elif e.code == 500 and attempt < len(RETRY_500_WAITS):
-                wait = RETRY_500_WAITS[attempt]
-            else:
+            kind = _retry_kind(e.code)
+            wait = _retry_wait(kind, attempt) if kind else None
+            if wait is None:
                 raise TransportError(last_err) from e
             print(f"    [retry {attempt+1}] {e.code}, waiting {wait}s...", flush=True)
             time.sleep(wait)
         except (TimeoutError, ConnectionError, urllib.error.URLError, socket.timeout) as e:
             last_err = f"connection: {e}"
-            if attempt >= len(RETRY_CONN_WAITS):
+            wait = _retry_wait("conn", attempt)
+            if wait is None:
                 raise TransportError(last_err) from e
-            wait = RETRY_CONN_WAITS[attempt]
             print(f"    [retry {attempt+1}] connection failed, waiting {wait}s...", flush=True)
             time.sleep(wait)
         except Exception as e:
@@ -132,11 +146,13 @@ def oc_send(agent_cfg: AgentCfg, session_id: str, system_prompt: str, text: str,
     if agent_name:
         payload["agent"] = agent_name
     if turn_index is not None:
-        # deterministic id (index of the first new turn in the session): a
-        # retry after a lost response is deduped by the server instead of
-        # appending the same turn twice (verified)
+        # content-derived id: a retry with the identical payload reuses the id
+        # and the server dedupes it instead of appending the same turn twice
+        # (verified); different content always gets a fresh id
+        digest = hashlib.sha256(text.encode("utf-8")).hexdigest()[:8]
         payload["messageID"] = MESSAGE_ID_TPL.format(sid=session_id[4:16],
-                                                     turn=turn_index)
+                                                     turn=turn_index,
+                                                     digest=digest)
     data = post_json(
         f"{oc_base_url(agent_cfg)}/session/{session_id}/message",
         payload,
@@ -166,12 +182,23 @@ def oc_delete_url(base_url: str, session_id: str) -> None:
 def oc_delete(agent_cfg: AgentCfg, session_id: str) -> None:
     oc_delete_url(oc_base_url(agent_cfg), session_id)
 
+def _session_last_activity(session: dict, title: str) -> float:
+    # server-reported last activity (ms epoch) wins; older servers without it
+    # fall back to the creation time embedded in the title, and unparseable
+    # titles count as old orphans
+    stamp = session.get("time")
+    updated = stamp.get("updated") if isinstance(stamp, dict) else None
+    if isinstance(updated, (int, float)) and updated > 0:
+        return updated / 1000.0
+    try:
+        return time.mktime(time.strptime(title.rsplit(" ", 1)[-1], TS_FORMAT))
+    except ValueError:
+        return 0.0
+
 def oc_sweep(base_url: str, prefix: str = SESSION_TITLE_PREFIX,
              min_age: float = SWEEP_MIN_AGE) -> None:
     # best-effort: delete orphan sessions left by crashed runs. Sessions with
-    # recent activity are skipped, so a live parallel run is not disturbed;
-    # without a usable timestamp the title's creation time is the fallback,
-    # and unparseable titles count as old orphans.
+    # recent activity are skipped, so a live parallel run is not disturbed
     try:
         data = http_get_json(base_url + "/session", TIMEOUT_LIST)
     except Exception:
@@ -184,17 +211,7 @@ def oc_sweep(base_url: str, prefix: str = SESSION_TITLE_PREFIX,
         sid = s.get("id")
         if not (sid and title.startswith(prefix)):
             continue
-        when = 0.0
-        stamp = s.get("time")
-        updated = stamp.get("updated") if isinstance(stamp, dict) else None
-        if isinstance(updated, (int, float)) and updated > 0:
-            when = updated / 1000.0  # ms epoch: last server-side activity
-        else:
-            try:  # older servers: fall back to the title's creation time
-                when = time.mktime(time.strptime(title.rsplit(" ", 1)[-1], TS_FORMAT))
-            except ValueError:
-                pass
-        if now - when >= min_age:
+        if now - _session_last_activity(s, title) >= min_age:
             oc_delete_url(base_url, sid)
 
 def oc_agent_list(base_url: str, timeout: float = TIMEOUT_LIST) -> set[str] | None:

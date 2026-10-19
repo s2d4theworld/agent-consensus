@@ -49,4 +49,4 @@ DURATION: <N>s
 === REC ===
 sessions: ['agent-consensus proposer <TS>', 'agent-consensus critic <TS>', 'agent-consensus judge <TS>']
 deletes: 3
-msgs: [('ses_fake0001test2018', 'msg_fake0001test_t0', None, 'Discussion topic: S3 topic\nStart the discussion now.'), ('ses_fake0002test2018', 'msg_fake0002test_t0', None, 'Discussion topic: S3 topic\nStart the discussion now.\n\n[P]: Proposer: I defend the topic.'), ('ses_fake0003test2018', 'msg_fake0003test_t0', None, 'TOPIC: S3 topic\n\nHere is the transcript:\n\n[P]:\nProposer: I defend the topic.\n\n[C]:\nCritic: I challenge the topic.')]
+msgs: [('ses_fake0001test2018', 'msg_fake0001test_t0_d4854bd5', None, 'Discussion topic: S3 topic\nStart the discussion now.'), ('ses_fake0002test2018', 'msg_fake0002test_t0_53bf9522', None, 'Discussion topic: S3 topic\nStart the discussion now.\n\n[P]: Proposer: I defend the topic.'), ('ses_fake0003test2018', 'msg_fake0003test_t0_cc0716cb', None, 'TOPIC: S3 topic\n\nHere is the transcript:\n\n[P]:\nProposer: I defend the topic.\n\n[C]:\nCritic: I challenge the topic.')]

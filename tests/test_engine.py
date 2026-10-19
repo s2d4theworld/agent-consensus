@@ -100,8 +100,23 @@ class TestOpencodeEngine(QuietRunMixin, unittest.TestCase):
         self.srv.verdicts[:] = ["YES - agree."]
         self.run_engine(oc_cfg(self.srv.base))
         for m in self.srv.msgs:
-            self.assertEqual(m["messageID"], f"msg_{m['sid'][4:16]}_t0")
+            self.assertRegex(m["messageID"],
+                             rf"^msg_{m['sid'][4:16]}_t0_[0-9a-f]{{8}}$")
         self.assertEqual(len(self.srv.msgs), 3)
+
+    def test_round2_message_id_differs_and_critic_reaches_proposer(self):
+        # regression: st["sent"] was recorded before the agent's own turn was
+        # appended, so round 2 reused the round-1 message id, the server
+        # deduped it and the proposer replayed its opening verbatim
+        self.srv.verdicts[:] = ["YES - agreed."]
+        self.run_engine(oc_cfg(self.srv.base, max_rounds=2))
+        prop = [m for m in self.srv.msgs if "PROPOSER" in m["system"]]
+        self.assertEqual(len(prop), 2)
+        sid = prop[0]["sid"][4:16]
+        self.assertRegex(prop[0]["messageID"], rf"^msg_{sid}_t0_[0-9a-f]{{8}}$")
+        self.assertRegex(prop[1]["messageID"], rf"^msg_{sid}_t1_[0-9a-f]{{8}}$")
+        self.assertNotIn("Discussion topic:", prop[1]["text"])
+        self.assertIn("Critic: I challenge the topic.", prop[1]["text"])
 
     def test_orphan_sessions_are_swept(self):
         sid = "ses_orphan0001test2018"

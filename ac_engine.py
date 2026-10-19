@@ -5,13 +5,12 @@ import re
 import socket
 import time
 import urllib.parse
-from typing import TypedDict
+from typing import NamedTuple, TypedDict
 
 import ac_config
 from ac_config import (
     AgentCfg,
     Config,
-    DEFAULT_MAX_ROUNDS,
     INSTALL_HINT,
     ROLES,
     ROLE_CRITIC,
@@ -20,6 +19,7 @@ from ac_config import (
     SESSION_TITLE_PREFIX,
     TIMEOUT_PREFLIGHT,
     TS_FORMAT,
+    coerce_max_rounds,
     is_opencode,
     transport_of,
 )
@@ -38,7 +38,13 @@ from ac_transports import (
 from ac_ui import input_required
 
 # shared shapes
-Turns = list[tuple[str, str, str]]           # (agent_key, name, text)
+class Turn(NamedTuple):
+    # one recorded debate turn
+    key: str
+    name: str
+    text: str
+
+Turns = list[Turn]
 Available = dict[str, set[str] | None]       # base_url -> agent names (None = unreachable)
 EffectiveAgents = dict[str, str | None]      # role -> restricted agent actually in use
 
@@ -74,14 +80,11 @@ def check_consensus(cfg: Config, topic: str, transcript: str,
 
 # ---------- Discussion engine ----------
 def format_transcript(turns: Turns) -> str:
-    # turns: list of (agent_key, name, text) -> string for judge
-    return "\n\n".join(f"[{name}]:\n{text}" for _, name, text in turns)
+    # turns: recorded debate turns -> string for judge
+    return "\n\n".join(f"[{turn.name}]:\n{turn.text}" for turn in turns)
 
 def parse_max_rounds(cfg: Config) -> int:
-    try:
-        return max(1, int(cfg.get("max_rounds", DEFAULT_MAX_ROUNDS)))
-    except (TypeError, ValueError):
-        return DEFAULT_MAX_ROUNDS
+    return coerce_max_rounds(cfg.get("max_rounds"))
 
 def check_servers(cfg: Config) -> Available:
     # sweep orphan sessions; fail fast if a stateful server is unreachable.
@@ -175,7 +178,8 @@ def build_prompts(topic: str, proposer: AgentCfg, critic: AgentCfg,
 
 class SessionState(TypedDict):
     # OpencodeSessions bookkeeping for one session role; id is "" until the
-    # session is created
+    # session is created. sent = number of turns (Discussion.turns) the
+    # session already covers; only mark_seen() advances it.
     id: str
     started: bool
     sent: int
@@ -196,6 +200,14 @@ class OpencodeSessions:
         if not st["id"]:
             st["id"] = oc_session_create(self.cfg["agents"][cfg_key], title)
         return st
+
+    def mark_seen(self, sess_key: str, turns_seen: int) -> None:
+        # the single place the cursor moves: it must count every recorded
+        # turn, including the agent's own (its session already holds it as
+        # the assistant message); stateless roles have no session -> no-op
+        st = self.state.get(sess_key)
+        if st is not None:
+            st["sent"] = turns_seen
 
     def close_all(self) -> None:
         for st in self.state.values():
@@ -227,13 +239,14 @@ class Discussion:
             topic, self.proposer, self.critic, self.agent_eff)
         self.sessions = OpencodeSessions(cfg)
         self.turns: Turns = []
+        self.started_at = 0.0  # set by start()
         self.ts = time.strftime(TS_FORMAT)
         self.path = os.path.join(ac_config.TRANSCRIPT_DIR, f"discussion_{self.ts}.txt")
         self.initial_msg = f"Discussion topic: {topic}\nStart the discussion now."
 
     def start(self) -> None:
         # [Model]/[Judge]/[Transport] lines + the transcript header
-        self.started_at = time.time()  # pylint: disable=attribute-defined-outside-init
+        self.started_at = time.time()
         print(f"\n  [Model] {self.proposer['name']} ({self.proposer['model']})  vs  "
               f"{self.critic['name']} ({self.critic['model']})")
         print(f"  [Judge] {self.judge['name']} ({self.judge['model']})")
@@ -247,14 +260,14 @@ class Discussion:
     def full_view(self, agent_key: str) -> list[dict[str, str]]:
         # stateless transport view: own turns = assistant, opponent = user
         msgs = [{"role": "user", "content": self.initial_msg}]
-        for key, name, text in self.turns:
-            if key == agent_key:
-                msgs.append({"role": "assistant", "content": text})
+        for turn in self.turns:
+            if turn.key == agent_key:
+                msgs.append({"role": "assistant", "content": turn.text})
             else:
-                msgs.append({"role": "user", "content": f"[{name}]: {text}"})
+                msgs.append({"role": "user", "content": f"[{turn.name}]: {turn.text}"})
         return msgs
 
-    def respond(self, key: str, sys_prompt: str) -> str:
+    def _request_turn(self, key: str, sys_prompt: str) -> str:
         a = self.cfg["agents"][key]
         if not is_opencode(a):
             return chat_completion(key, a, sys_prompt, self.full_view(key))
@@ -263,14 +276,22 @@ class Discussion:
         parts = []
         if not st["started"]:
             parts.append(self.initial_msg)
-        for k2, n2, t2 in self.turns[st["sent"]:]:
-            if k2 != key:
-                parts.append(f"[{n2}]: {t2}")
+        for turn in self.turns[st["sent"]:]:
+            if turn.key != key:
+                parts.append(f"[{turn.name}]: {turn.text}")
         out = oc_send(a, st["id"], sys_prompt, "\n\n".join(parts),
                       agent_name=self.agent_eff.get(key), turn_index=st["sent"])
         st["started"] = True
-        st["sent"] = len(self.turns)
         return out
+
+    def take_turn(self, key: str, sys_prompt: str) -> str:
+        # a debater turn: send, then record it and advance the session cursor
+        # together - recording first means the cursor naturally counts the
+        # agent's own turn, so the next send carries exactly the new reply
+        text = self._request_turn(key, sys_prompt)
+        self.turns.append(Turn(key, self.cfg["agents"][key]["name"], text))
+        self.sessions.mark_seen(key, len(self.turns))
+        return text
 
     def judge_now(self) -> tuple[bool, str]:
         # stateless: full transcript each round. stateful: first call = full
@@ -289,7 +310,7 @@ class Discussion:
                       agent_name=self.agent_eff.get(self.judge_key),
                       turn_index=st["sent"])
         st["started"] = True
-        st["sent"] = len(self.turns)
+        self.sessions.mark_seen(ROLE_JUDGE, len(self.turns))
         return parse_verdict(out), out
 
     def run(self) -> tuple[bool, int, str]:
@@ -301,13 +322,11 @@ class Discussion:
             for rnd in range(1, self.max_rounds + 1):
                 rounds_done = rnd
                 print(f"  [Round {rnd}] {self.proposer['name']} is thinking...", flush=True)
-                a_text = self.respond(ROLE_PROPOSER, self.proposer_sys)
-                self.turns.append((ROLE_PROPOSER, self.proposer["name"], a_text))
+                a_text = self.take_turn(ROLE_PROPOSER, self.proposer_sys)
                 _print_turn(self.proposer["name"], self.proposer["model"], a_text)
 
                 print(f"  [Round {rnd}] {self.critic['name']} is evaluating...", flush=True)
-                b_text = self.respond(ROLE_CRITIC, self.critic_sys)
-                self.turns.append((ROLE_CRITIC, self.critic["name"], b_text))
+                b_text = self.take_turn(ROLE_CRITIC, self.critic_sys)
                 _print_turn(self.critic["name"], self.critic["model"], b_text)
 
                 self._append_round(rnd, a_text, b_text)

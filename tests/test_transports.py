@@ -109,6 +109,22 @@ class TestTransports(unittest.TestCase):
         with self.assertRaisesRegex(TransportError, "opencode: boom"):
             ac_transports.oc_send(agent, "ses_fake0001test2018", "sys", "text", turn_index=0)
 
+    def test_oc_send_message_id_is_content_derived(self):
+        # identical resend (lost-response retry) -> replayed by the server;
+        # different content -> fresh id, even at an index that was used before
+        srv = FakeServer()
+        self.addCleanup(srv.stop)
+        agent = oc_cfg(srv.base)["agents"]["proposer"]
+        sid = "ses_fake0001test2018"
+        ac_transports.oc_send(agent, sid, "sys", "same text", turn_index=0)
+        ac_transports.oc_send(agent, sid, "sys", "same text", turn_index=0)
+        ac_transports.oc_send(agent, sid, "sys", "other text", turn_index=0)
+        self.assertEqual(len(srv.msgs), 2)
+        self.assertEqual(len(srv.dupes), 1)
+        ids = [m["messageID"] for m in srv.msgs]
+        self.assertRegex(ids[0], r"^msg_fake0001test_t0_[0-9a-f]{8}$")
+        self.assertNotEqual(ids[0], ids[1])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -11,6 +11,7 @@ from ac_config import (
     TIMEOUT_MENU,
     TRANSPORT_OPENCODE,
     TRANSPORT_OPENAI,
+    coerce_max_rounds,
     ensure_agent_installed,
     is_opencode,
     save_config,
@@ -109,11 +110,8 @@ def setup_wizard() -> None:
     print("  Tip: pick a judge model DIFFERENT from both debaters for neutrality.")
     print()
     cfg: Config = {"agents": {key: _prompt_agent(key, transport) for key in ROLES}}
-    m = input_optional("    Max discussion rounds", str(DEFAULT_MAX_ROUNDS))
-    try:
-        cfg["max_rounds"] = max(1, int(m))
-    except ValueError:
-        cfg["max_rounds"] = DEFAULT_MAX_ROUNDS
+    cfg["max_rounds"] = coerce_max_rounds(
+        input_optional("    Max discussion rounds", str(DEFAULT_MAX_ROUNDS)))
     save_config(cfg)
     if transport == TRANSPORT_OPENCODE:
         ensure_agent_installed()

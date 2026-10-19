@@ -2,7 +2,7 @@
 # restricted-agent installer. Python stdlib only.
 import json
 import os
-from typing import NotRequired, TypedDict
+from typing import Any, NotRequired, TypedDict
 
 class AgentCfg(TypedDict):
     # one config.json "agents" value; everything but name/api_url/model is
@@ -48,8 +48,11 @@ SWEEP_MIN_AGE = 300
 SESSION_TITLE_PREFIX = "agent-consensus "  # the sweep recognizes titles by it
 TS_FORMAT = "%Y%m%d_%H%M%S"  # run-start stamp appended to session titles
 # deterministic message id: {sid} = session id without the "ses_" prefix, cut
-# to 12 chars; retries after a lost response are deduped by the server
-MESSAGE_ID_TPL = "msg_{sid}_t{turn}"
+# to 12 chars; {turn} = index of the first new turn; {digest} = sha256 of the
+# prompt text, first 8 hex chars. An identical retry after a lost response
+# reuses the id and the server dedupes it; different content always gets a
+# fresh id, so id reuse can never drop a turn
+MESSAGE_ID_TPL = "msg_{sid}_t{turn}_{digest}"
 # advice shown when a configured restricted (websearch) agent is missing
 INSTALL_HINT = "run: python agent_consensus.py install-agent, then restart opencode serve"
 
@@ -95,6 +98,14 @@ def save_config(cfg: Config) -> None:
     with open(CONFIG_PATH, "w", encoding="utf-8") as f:
         json.dump(cfg, f, indent=2, ensure_ascii=False)
     print(f"  Config saved: {CONFIG_PATH}")
+
+def coerce_max_rounds(value: Any) -> int:
+    # one rule for config files and wizard input: malformed values fall back
+    # to the default, a valid value is never below 1 round
+    try:
+        return max(1, int(value))
+    except (TypeError, ValueError):
+        return DEFAULT_MAX_ROUNDS
 
 def transport_of(agent_cfg: AgentCfg) -> str:
     return agent_cfg.get("transport", TRANSPORT_OPENAI)
