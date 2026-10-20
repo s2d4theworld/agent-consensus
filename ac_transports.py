@@ -170,18 +170,20 @@ def _oc_error(data: dict[str, Any]) -> None:
               or err.get("name") or "unknown error")
     raise TransportError(f"opencode: {detail}")
 
-def _oc_text(parts: object, kind: str, where: str) -> str:
-    # extract one part kind defensively: a malformed envelope must surface as
-    # a transport error, not as an AttributeError from deep inside parsing
+def _oc_text(parts: object, where: str) -> str:
+    # the reply text of an assistant envelope: text parts only. Reasoning
+    # parts are chain-of-thought, never the reply, so they are skipped. A
+    # malformed envelope must surface as a transport error, not as an
+    # AttributeError from deep inside parsing
     if not isinstance(parts, list):
         raise TransportError(f"unexpected response from {where}: missing 'parts'")
     texts: list[str] = []
     for part in parts:
         if not isinstance(part, dict):
             raise TransportError(f"unexpected response from {where}: malformed part")
-        text = part.get("text")
-        if part.get("type") != kind:
+        if part.get("type") != "text":
             continue
+        text = part.get("text")
         if not isinstance(text, str):
             raise TransportError(f"unexpected response from {where}: part has no text")
         texts.append(text)
@@ -209,7 +211,7 @@ def _chat_content(data: Any, where: str) -> str:
     msg = first.get("message") if isinstance(first, dict) else None
     if not isinstance(msg, dict):
         raise TransportError(f"unexpected response from {where}: missing 'choices[0].message'")
-    content = msg.get("content") or msg.get("reasoning_content") or ""
+    content = msg.get("content") or ""
     if not isinstance(content, str):
         raise TransportError(f"unexpected response from {where}: message content is not text")
     return content
@@ -271,10 +273,8 @@ def oc_send(agent_cfg: AgentCfg, session_id: str, system_prompt: str, text: str,
     data = _json_object(post_json(where, payload, timeout=TIMEOUT_MESSAGE), where)
     _oc_error(data)
     parts = data.get("parts")
-    out = _oc_text(parts, "text", where)
-    if not out:
-        out = _oc_text(parts, "reasoning", where)
-    return _final_text(out, agent_cfg["model"], "opencode: ")
+    # a turn without reply text is an empty-reply error, never CoT as turn
+    return _final_text(_oc_text(parts, where), agent_cfg["model"], "opencode: ")
 
 def _delete_session(base_url: str, session_id: str) -> None:
     try:

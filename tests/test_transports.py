@@ -262,15 +262,17 @@ class TestTransports(FakeServerMixin, unittest.TestCase):
         self.assert_malformed(payloads, ac_transports.chat_completion,
                               "proposer", agent, "sys", [])
 
-    def test_chat_completion_uses_reasoning_content(self):
-        # empty content with reasoning_content set: thinking models put the
-        # answer in the reasoning field, which must not read as empty
+    def test_chat_completion_ignores_reasoning_content(self):
+        # empty content with reasoning_content set is a chain-of-thought
+        # dead end, not an answer: the turn must fail as empty, never record
+        # the model's internal monologue as reply text
         agent = stateless_agent("http://x/v1/chat/completions")
         payload = {"choices": [{"message": {"content": "",
                                             "reasoning_content": "thought it through"}}]}
         with mock.patch.object(ac_transports, "post_json", return_value=payload):
-            out = ac_transports.chat_completion("proposer", agent, "sys", [])
-        self.assertEqual(out, "thought it through")
+            with self.assertRaises(TransportError) as cm:
+                ac_transports.chat_completion("proposer", agent, "sys", [])
+        self.assertIn("empty response", str(cm.exception))
 
     def test_oc_session_create_rejects_malformed_response(self):
         agent = oc_cfg("http://x")["agents"]["proposer"]
@@ -300,13 +302,15 @@ class TestTransports(FakeServerMixin, unittest.TestCase):
         self.assert_malformed(payloads, ac_transports.oc_send,
                               agent, "ses_fake0001test2018", "sys", "text")
 
-    def test_oc_send_falls_back_to_reasoning_parts(self):
-        # no text part at all, only a reasoning part: that is the answer
+    def test_oc_send_ignores_reasoning_only_parts(self):
+        # no text part at all, only reasoning parts: chain-of-thought is not
+        # the reply; a turn that produced no text must fail as empty
         agent = oc_cfg("http://x")["agents"]["proposer"]
         payload = {"parts": [{"type": "reasoning", "text": "thinking..."}]}
         with mock.patch.object(ac_transports, "post_json", return_value=payload):
-            out = ac_transports.oc_send(agent, "ses_fake0001test2018", "sys", "text")
-        self.assertEqual(out, "thinking...")
+            with self.assertRaises(TransportError) as cm:
+                ac_transports.oc_send(agent, "ses_fake0001test2018", "sys", "text")
+        self.assertIn("opencode: empty response", str(cm.exception))
 
     def test_oc_send_message_id_is_content_derived(self):
         # identical resend (lost-response retry) -> replayed by the server;
