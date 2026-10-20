@@ -2,11 +2,11 @@
 description: "Restricted agent for debate bots: web search only; no shell, file writes, or subagents"
 mode: subagent
 hidden: true
-# opencode forces a text-only "max steps reached" summary turn once this
-# budget is exhausted mid-reply; too small a value cuts a websearch round
-# short and the summary can leak into the debate as a turn. 8 allows several
-# search rounds before the forced final answer.
-steps: 8
+# opencode applies this budget per message send, restarting the count every
+# turn; proposer and critic never share it. 100 is "no practical limit" for
+# one turn (the transport's 300s timeout is the hard stop). If it is ever
+# reached mid-reply, opencode forces a text-only summary turn.
+steps: 100
 permission:
   bash: deny
   edit: deny
