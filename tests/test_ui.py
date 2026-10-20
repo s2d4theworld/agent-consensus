@@ -33,15 +33,16 @@ def wizard_run(answers: str):
 
 
 class TestUi(FakeServerMixin, QuietRunMixin, unittest.TestCase):
-    def run_wizard(self, answers: str) -> Any:
-        # answer the wizard with a fresh CONFIG_PATH; return the saved config
+    def run_wizard(self, answers: str) -> tuple[Any, str]:
+        # answer the wizard with a fresh CONFIG_PATH;
+        # return the saved config and the captured output
         cfg_path = self.temp_config()
-        with wizard_run(answers):
+        with wizard_run(answers) as out:
             self.assertTrue(ac_ui.setup_wizard())
-        return read_json(cfg_path)
+        return read_json(cfg_path), out.getvalue()
 
     def test_setup_wizard_writes_config(self):
-        cfg = self.run_wizard(WIZARD_STDIN_OPENAI)
+        cfg, _ = self.run_wizard(WIZARD_STDIN_OPENAI)
         self.assertEqual(cfg["max_rounds"], 3)
         self.assertTrue(all(a["transport"] == "openai" for a in cfg["agents"].values()))
         self.assertEqual(cfg["agents"]["judge"]["temperature"], 0.0)
@@ -56,19 +57,16 @@ class TestUi(FakeServerMixin, QuietRunMixin, unittest.TestCase):
     def test_wizard_opencode_dash_omits_agent(self):
         # '-' at the restricted-agent prompt means "no agent": the saved role
         # must have no agent key, so it runs with the server's full tool set
-        cfg = self.run_wizard(WIZARD_STDIN_OPENCODE_NO_AGENT)
+        cfg, _ = self.run_wizard(WIZARD_STDIN_OPENCODE_NO_AGENT)
         for key in (ac_config.ROLE_PROPOSER, ac_config.ROLE_CRITIC,
                     ac_config.ROLE_JUDGE):
             self.assertNotIn("agent", cfg["agents"][key])
 
     def test_wizard_warns_on_unknown_transport(self):
         # a mistyped transport must warn and fall back to opencode
-        cfg_path = self.temp_config()
         answers = "x\n" + WIZARD_STDIN_OPENCODE.split("\n", 1)[1]
-        with wizard_run(answers) as out:
-            self.assertTrue(ac_ui.setup_wizard())
-        self.assertIn("unknown transport", out.getvalue())
-        cfg = read_json(cfg_path)
+        cfg, out = self.run_wizard(answers)
+        self.assertIn("unknown transport", out)
         self.assertTrue(all(a["transport"] == "opencode"
                             for a in cfg["agents"].values()))
 

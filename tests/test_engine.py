@@ -256,6 +256,11 @@ class TestStatelessEngine(FakeServerMixin, QuietRunMixin, unittest.TestCase):
         self.srv = self.fake_server()
         self.cfg = stateless_cfg(self.srv.base + "/v1/chat/completions")
 
+    def run_rounds(self, max_rounds: int) -> str:
+        # run the fixture for a fixed number of rounds, return the output
+        self.cfg["max_rounds"] = max_rounds
+        return self.run_engine(self.cfg)
+
     def test_refused_endpoint_fails_fast(self):
         cfg = stateless_cfg(f"http://127.0.0.1:{closed_port()}/v1/chat/completions")
         with self.assertRaises(ServerUnreachable) as cm:
@@ -277,13 +282,12 @@ class TestStatelessEngine(FakeServerMixin, QuietRunMixin, unittest.TestCase):
             "api_url": f"http://127.0.0.1:{closed_port()}/v1/chat/completions",
             "model": "m",
         }
-        out = self.run_engine(self.cfg)
+        out = self.run_rounds(1)
         self.assertIn("ignoring unknown agent role(s): backup", out)
         self.assertIn("NO CONSENSUS", out)
 
     def test_temperature_defaults(self):
-        self.cfg["max_rounds"] = 2
-        out = self.run_engine(self.cfg)
+        out = self.run_rounds(2)
         self.assertIn("Final status : CONSENSUS", out)
         self.assertEqual([p["temperature"] for p in self.srv.chats],
                          [0.7, 0.7, 0.7, 0.7, 0.0])
@@ -292,8 +296,7 @@ class TestStatelessEngine(FakeServerMixin, QuietRunMixin, unittest.TestCase):
         # the transport prepends the system prompt; after it, each request
         # rebuilds the view: own turns are assistant messages, opponent turns
         # are user messages prefixed with the speaker's name
-        self.cfg["max_rounds"] = 2
-        self.run_engine(self.cfg)
+        self.run_rounds(2)
         r1_proposer, r1_critic, r2_proposer, r2_critic, judge = [
             c["messages"] for c in self.srv.chats]
         self.assertEqual(roles(r1_proposer), ["system", "user"])
@@ -316,9 +319,8 @@ class TestStatelessEngine(FakeServerMixin, QuietRunMixin, unittest.TestCase):
     def test_judge_fallback_still_uses_judge_temperature(self):
         # without a judge role the judging call runs on the proposer's config,
         # but it is still a judging call: temperature 0.0, not 0.7
-        self.cfg["max_rounds"] = 2
         del self.cfg["agents"]["judge"]
-        out = self.run_engine(self.cfg)
+        out = self.run_rounds(2)
         self.assertIn("Final status : CONSENSUS", out)
         self.assertEqual([p["temperature"] for p in self.srv.chats],
                          [0.7, 0.7, 0.7, 0.7, 0.0])

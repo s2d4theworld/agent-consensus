@@ -91,6 +91,14 @@ def http_get_json(url: str, timeout: float) -> Any:
     with urllib.request.urlopen(url, timeout=timeout) as resp:
         return _read_json_response(resp)
 
+def _get_json_list(url: str, timeout: float) -> list[Any] | None:
+    # best-effort GET for a JSON list: unreachable or non-list reads as None
+    try:
+        data = http_get_json(url, timeout)
+    except Exception:
+        return None
+    return data if isinstance(data, list) else None
+
 def post_json(url: str, payload: dict[str, Any],
               headers: dict[str, str] | None = None,
               timeout: float = TIMEOUT_DEFAULT) -> Any:
@@ -135,6 +143,14 @@ def post_json(url: str, payload: dict[str, Any],
 def strip_control_tokens(text: str) -> str:
     # Strip leaked control tokens from model output (e.g. <|constrain|>, <|channel|>)
     return re.sub(r"<\|[^|]*\|>", "", text).strip()
+
+def _final_text(raw: str, model: str, prefix: str = "") -> str:
+    # message text returned to the engine: leaked control tokens stripped;
+    # a reply that is empty after that is an error, not a silent blank turn
+    text = strip_control_tokens(raw)
+    if not text:
+        raise TransportError(f"{prefix}empty response from model '{model}'")
+    return text
 
 def _json_object(data: Any, where: str) -> dict[str, Any]:
     if not isinstance(data, dict):
@@ -212,10 +228,7 @@ def chat_completion(agent_key: str, agent_cfg: AgentCfg, system_prompt: str,
     }
     where = agent_cfg["api_url"]
     data = post_json(where, payload, headers={"Authorization": f"Bearer {api_key}"})
-    content = strip_control_tokens(_chat_content(data, where))
-    if not content:
-        raise TransportError(f"empty response from model '{agent_cfg['model']}'")
-    return content
+    return _final_text(_chat_content(data, where), agent_cfg["model"])
 
 # ---------- Transport: opencode serve (stateful sessions) ----------
 def oc_base_url(agent_cfg: AgentCfg) -> str:
@@ -261,10 +274,7 @@ def oc_send(agent_cfg: AgentCfg, session_id: str, system_prompt: str, text: str,
     out = _oc_text(parts, "text", where)
     if not out:
         out = _oc_text(parts, "reasoning", where)
-    out = strip_control_tokens(out)
-    if not out:
-        raise TransportError(f"opencode: empty response from model '{agent_cfg['model']}'")
-    return out
+    return _final_text(out, agent_cfg["model"], "opencode: ")
 
 def _delete_session(base_url: str, session_id: str) -> None:
     try:
@@ -299,11 +309,8 @@ def oc_sweep(base_url: str, prefix: str = SESSION_TITLE_PREFIX,
     # server-reported activity protects a live parallel run; a title-only
     # session (old server) is judged against the much longer title_min_age
     # because its creation stamp never refreshes
-    try:
-        data = http_get_json(base_url + "/session", TIMEOUT_LIST)
-    except Exception:
-        return
-    if not isinstance(data, list):
+    data = _get_json_list(base_url + "/session", TIMEOUT_LIST)
+    if data is None:
         return
     now = time.time()
     for s in data:
@@ -322,11 +329,8 @@ def oc_sweep(base_url: str, prefix: str = SESSION_TITLE_PREFIX,
 
 def oc_agent_list(base_url: str, timeout: float = TIMEOUT_LIST) -> set[str] | None:
     # names of agents available on the server; None if unreachable
-    try:
-        data = http_get_json(base_url + "/agent", timeout)
-    except Exception:
-        return None
-    if not isinstance(data, list):
+    data = _get_json_list(base_url + "/agent", timeout)
+    if data is None:
         return None
     names: set[str] = set()
     for a in data:
