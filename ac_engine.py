@@ -115,6 +115,11 @@ def format_transcript(turns: Turns) -> str:
     # turns: recorded debate turns -> string for judge
     return "\n\n".join(f"[{turn.name}]:\n{turn.text}" for turn in turns)
 
+def _history_line(turn: Turn) -> str:
+    # an opponent turn as it appears in a prompt history; both transports
+    # (stateless full view, stateful delta) must render it the same way
+    return f"[{turn.name}]: {turn.text}"
+
 def parse_max_rounds(cfg: Config) -> int:
     return coerce_max_rounds(cfg.get("max_rounds"))
 
@@ -331,7 +336,7 @@ class Discussion:
             if turn.key == agent_key:
                 msgs.append({"role": "assistant", "content": turn.text})
             else:
-                msgs.append({"role": "user", "content": f"[{turn.name}]: {turn.text}"})
+                msgs.append({"role": "user", "content": _history_line(turn)})
         return msgs
 
     def _session_title(self, role: str) -> str:
@@ -362,7 +367,7 @@ class Discussion:
             parts.append(self.initial_msg)
         for turn in self.turns[st["sent"]:]:
             if turn.key != key:
-                parts.append(f"[{turn.name}]: {turn.text}")
+                parts.append(_history_line(turn))
         return self._stateful_send(st, sys_prompt, "\n\n".join(parts))
 
     def take_turn(self, key: str, sys_prompt: str) -> Turn:
