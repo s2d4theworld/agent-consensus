@@ -10,6 +10,7 @@
 #
 # Normalized away: temp paths, timestamps, durations, ephemeral fake-server
 # ports. Everything else must match byte for byte.
+import contextlib
 import glob
 import json
 import os
@@ -50,17 +51,27 @@ def scenario(fn):
 
 
 class Ctx:
-    def __init__(self, root):
-        self.root = root
-        self.transcripts = os.path.join(root, "transcripts")
-        self.agents = os.path.join(root, "agents")
-        self.config_path = os.path.join(root, "config.json")
+    def __init__(self, name):
+        self.root = tempfile.mkdtemp(prefix=f"golden_{name}_")
+        self.transcripts = os.path.join(self.root, "transcripts")
+        self.agents = os.path.join(self.root, "agents")
+        self.config_path = os.path.join(self.root, "config.json")
         os.makedirs(self.transcripts, exist_ok=True)
         self.srv = FakeServer()
 
     def stop(self):
         self.srv.stop()
         shutil.rmtree(self.root, ignore_errors=True)
+
+
+@contextlib.contextmanager
+def scenario_ctx(name):
+    # one temp root and fake server per scenario, torn down no matter what
+    ctx = Ctx(name)
+    try:
+        yield ctx
+    finally:
+        ctx.stop()
 
 
 # ---------- scenarios ----------
@@ -132,82 +143,89 @@ def normalize(text, root):
     return text
 
 
+def first_transcript(directory):
+    # a scenario may write no transcript or several; the first file is compared
+    tfiles = sorted(glob.glob(os.path.join(directory, "*.txt")))
+    if not tfiles:
+        return ""
+    with open(tfiles[0], "r", encoding="utf-8") as f:
+        return f.read()
+
+
+def render(ctx, err, stdout):
+    # everything a golden records: stdout, exception, transcript, requests
+    sessions = [normalize(s.get("title") or "?", ctx.root) for s in ctx.srv.sessions]
+    msgs = [(m["sid"], m["messageID"], m["agent"], m["text"]) for m in ctx.srv.msgs]
+    parts = [
+        "=== STDOUT ===",
+        normalize(stdout, ctx.root).rstrip("\n"),
+        "=== EXC ===",
+        err or "",
+        "=== TRANSCRIPT ===",
+        normalize(first_transcript(ctx.transcripts), ctx.root).rstrip("\n"),
+        "=== REC ===",
+        f"sessions: {sessions}",
+        f"deletes: {len(ctx.srv.deletes)}",
+        f"msgs: {msgs}",
+    ]
+    return "\n".join(parts) + "\n"
+
+
 def run_scenario(name, fn):
-    ctx = Ctx(tempfile.mkdtemp(prefix=f"golden_{name}_"))
-    err = None
-    with patched_attrs(ac_config,
-                       TRANSCRIPT_DIR=ctx.transcripts,
-                       CONFIG_PATH=ctx.config_path,
-                       AGENT_SRC=os.path.join(ROOT, ".opencode", "agents",
-                                              "debater.md"),
-                       OPENCODE_AGENTS_DIR=ctx.agents), \
+    with scenario_ctx(name) as ctx, \
+            patched_attrs(ac_config,
+                          TRANSCRIPT_DIR=ctx.transcripts,
+                          CONFIG_PATH=ctx.config_path,
+                          AGENT_SRC=os.path.join(ROOT, ".opencode", "agents",
+                                                 "debater.md"),
+                          OPENCODE_AGENTS_DIR=ctx.agents), \
             captured_stdout() as buf:
+        err = None
         try:
             fn(ctx)
         except SystemExit:
             pass
         except Exception as e:
             err = f"{type(e).__name__}: {e}"
+        return render(ctx, err, buf.getvalue())
+
+
+def check_one(name, fn, update):
+    # run one scenario and reconcile its output with the golden; True = OK
     try:
-        tfiles = sorted(glob.glob(os.path.join(ctx.transcripts, "*.txt")))
-        transcript = ""
-        if tfiles:
-            with open(tfiles[0], "r", encoding="utf-8") as f:
-                transcript = f.read()
-        sessions = [normalize(s.get("title") or "?", ctx.root) for s in ctx.srv.sessions]
-        msgs = [(m["sid"], m["messageID"], m["agent"], m["text"]) for m in ctx.srv.msgs]
-        parts = [
-            "=== STDOUT ===",
-            normalize(buf.getvalue(), ctx.root).rstrip("\n"),
-            "=== EXC ===",
-            err or "",
-            "=== TRANSCRIPT ===",
-            normalize(transcript, ctx.root).rstrip("\n"),
-            "=== REC ===",
-            f"sessions: {sessions}",
-            f"deletes: {len(ctx.srv.deletes)}",
-            f"msgs: {msgs}",
-        ]
-        return "\n".join(parts) + "\n"
-    finally:
-        ctx.stop()
+        rendered = run_scenario(name, fn)
+    except Exception as e:
+        print(f"FAIL {name}: harness error {type(e).__name__}: {e}")
+        return False
+    path = os.path.join(GOLDEN_DIR, f"{name}.txt")
+    if update:
+        with open(path, "w", encoding="utf-8", newline="\n") as f:
+            f.write(rendered)
+        print(f"UPDATED {name}")
+        return True
+    if not os.path.exists(path):
+        print(f"FAIL {name}: missing golden {path} (run with --update)")
+        return False
+    with open(path, "r", encoding="utf-8") as f:
+        expected = f.read()
+    if rendered == expected:
+        print(f"PASS {name}")
+        return True
+    print(f"FAIL {name}: output differs from golden")
+    for i, (a, b) in enumerate(zip(expected.splitlines(), rendered.splitlines())):
+        if a != b:
+            print(f"   line {i}: golden={a!r}")
+            print(f"   line {i}: actual={b!r}")
+            break
+    else:
+        print("   (line count differs)")
+    return False
 
 
 def main() -> int:
     update = "--update" in sys.argv[1:]
     os.makedirs(GOLDEN_DIR, exist_ok=True)
-    failed = []
-    for name, fn in SCENARIOS.items():
-        try:
-            rendered = run_scenario(name, fn)
-        except Exception as e:
-            print(f"FAIL {name}: harness error {type(e).__name__}: {e}")
-            failed.append(name)
-            continue
-        path = os.path.join(GOLDEN_DIR, f"{name}.txt")
-        if update:
-            with open(path, "w", encoding="utf-8", newline="\n") as f:
-                f.write(rendered)
-            print(f"UPDATED {name}")
-            continue
-        if not os.path.exists(path):
-            print(f"FAIL {name}: missing golden {path} (run with --update)")
-            failed.append(name)
-            continue
-        with open(path, "r", encoding="utf-8") as f:
-            expected = f.read()
-        if rendered == expected:
-            print(f"PASS {name}")
-            continue
-        failed.append(name)
-        print(f"FAIL {name}: output differs from golden")
-        for i, (a, b) in enumerate(zip(expected.splitlines(), rendered.splitlines())):
-            if a != b:
-                print(f"   line {i}: golden={a!r}")
-                print(f"   line {i}: actual={b!r}")
-                break
-        else:
-            print("   (line count differs)")
+    failed = [name for name, fn in SCENARIOS.items() if not check_one(name, fn, update)]
     if not update:
         print("\nALL PASS" if not failed else f"\nFAILED: {', '.join(failed)}")
     return 1 if failed else 0
